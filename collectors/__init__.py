@@ -1,0 +1,1 @@
+"""Public GitHub data collection."""
