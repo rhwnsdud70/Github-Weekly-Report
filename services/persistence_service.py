@@ -16,12 +16,12 @@ def persist_measurements(database, candidates, period, measured_at=None):
                 'discussion_total':candidate.metric('discussion_total').value})
             database.metrics(repo.identity,end,{key:asdict(value) for key,value in candidate.metrics.items()},
                              candidate.score.to_dict() if candidate.score else {})
-        
+
 
 def persist_week(database, candidates, report, measured_at=None, transmission=None):
-    persist_measurements(database,candidates,report.period,measured_at)
     end = report.period.end.isoformat()
     with database.transaction():
+        persist_measurements(database,candidates,report.period,measured_at)
         for rank, candidate in enumerate(report.top,1):
             repo = candidate.repository
             database.repository(repo.identity,asdict(repo))

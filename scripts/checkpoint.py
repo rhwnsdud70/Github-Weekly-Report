@@ -38,7 +38,7 @@ def main():
     summary = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else 'no output'
     record = f'- Phase {args.phase}: {args.description}; `{summary}`; 다음: {args.next_task}\n'
     text = text.replace('## 설계 결정 / 미완성 코드', record + '\n## 설계 결정 / 미완성 코드')
-    path.write_text(text, encoding='utf-8')
+    path.write_text(text, encoding='utf-8', newline='\n')
     sys.exit(result.returncode)
 
 

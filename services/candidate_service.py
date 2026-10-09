@@ -16,7 +16,7 @@ class CandidateCollector:
         self.github, self.web_client, self.trending = github, web_client, trending
         self.errors = []
 
-    def collect(self, period, limit=rules.CANDIDATE_LIMIT, include_trending=True):
+    def collect(self, period, limit=rules.CANDIDATE_LIMIT, include_trending=True, watchlist_names=()):
         candidates = {}
         def add(name, source, rank=None, event=None, raw=None):
             try:
@@ -39,6 +39,8 @@ class CandidateCollector:
                     add(name, 'trending', rank)
         except GitHubError as error:
             self.errors.append(str(error))
+        for name in watchlist_names:
+            add(name,'watchlist')
         date = (period.end - timedelta(days=14)).date().isoformat()
         for topic in rules.SEARCH_TOPICS:
             try:

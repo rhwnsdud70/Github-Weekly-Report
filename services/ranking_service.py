@@ -56,4 +56,6 @@ def security_priority(candidate):
     # Only explicitly evidenced factors; absent data adds no urgency points.
     factors = {key for event in candidate.events if event.source == 'security'
                for key in rules.SECURITY_PRIORITY_WEIGHTS if event.details.get(key) is True}
-    return sum(rules.SECURITY_PRIORITY_WEIGHTS[key] for key in factors)
+    scale = next((bonus for minimum,bonus in rules.SECURITY_PROJECT_SCALE
+                  if (candidate.repository.stars or 0) >= minimum),0)
+    return sum(rules.SECURITY_PRIORITY_WEIGHTS[key] for key in factors) + scale

@@ -29,3 +29,22 @@ def test_new_repository_and_discussion_snapshots():
     assert c.metric('new_repository_priority').value is True
     assert c.metric('discussion_delta').value == 10
     assert c.metric('discussion_growth').value == 100
+
+
+def test_release_combined_conditions_choose_highest():
+    from collectors.github_release import release_event
+    event = release_event({'tag_name':'v2.0.0','body':'## Breaking changes\nA documented migration.',
+        'html_url':'url','published_at':period().start.isoformat()})
+    assert event.kind == 'breaking'
+    assert 'major' in event.details['classification_matches']
+
+
+def test_official_high_rce_is_mandatory_critical():
+    from collectors.github_security import security_event
+    event = security_event({'severity':'high','summary':'Remote code execution in parser',
+        'html_url':'url','published_at':period().start.isoformat(),
+        'cvss':{'vector_string':'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H'}})
+    c = Candidate(Repository(1,'a/b','url'),events=[event])
+    assert c.critical
+    assert event.kind == 'rce'
+    assert event.details['easy_to_exploit']

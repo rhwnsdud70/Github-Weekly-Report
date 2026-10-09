@@ -14,7 +14,8 @@ class DeepAnalysisCollector:
         def append(kind, url, title, text, author=None, occurred_at=None):
             if text:
                 documents.append({'id': f'd{len(documents)+1}', 'kind': kind, 'url': url,
-                    'title': title, 'text': text[:18000], 'author': author, 'occurred_at': occurred_at})
+                    'title': title, 'text': text[:rules.DEEP_DOCUMENT_CHAR_LIMIT], 'author': author, 'occurred_at': occurred_at,
+                    'truncated':len(text)>rules.DEEP_DOCUMENT_CHAR_LIMIT})
         def attempt(label, function):
             try:
                 return function()
@@ -61,7 +62,17 @@ class DeepAnalysisCollector:
             append(event.source, event.url, event.title,
                 event.details.get('body') or event.details.get('description') or event.title,
                 occurred_at=event.occurred_at)
-        return documents
+        # Keep official context and event evidence before filling the comment budget.
+        prioritized = sorted(documents,key=lambda d:d['kind'] not in {'readme','official_docs','release','security'})
+        bounded, used = [], 0
+        for document in prioritized:
+            size = len(document['text'])
+            if used+size <= rules.DEEP_TOTAL_CHAR_LIMIT:
+                bounded.append(document)
+                used += size
+        if len(bounded)<len(documents) or any(d['truncated'] for d in bounded):
+            candidate.errors.append('deep evidence limited to configured text budget; partial document coverage')
+        return bounded
 
     def collect_top(self, top, period):
         if len(top) > rules.TOP_COUNT:

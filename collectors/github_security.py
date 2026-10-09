@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlparse
 from models.domain import Event
 
@@ -16,6 +17,13 @@ def advisory_repository(data):
 def security_event(data):
     if data.get('withdrawn_at') or data.get('severity') not in ('critical', 'high'):
         return None
-    return Event(data['severity'], data['summary'], data['html_url'], data['published_at'], 'security',
+    kind = data['severity']
+    if re.search(r'\b(?:remote code execution|RCE)\b',data['summary'],re.IGNORECASE):
+        kind = 'rce'
+    elif re.search(r'\bsupply[- ]chain attack\b',data['summary'],re.IGNORECASE):
+        kind = 'supply_chain'
+    vector = (data.get('cvss') or {}).get('vector_string') or ''
+    easy = all(part in vector.split('/') for part in ('AV:N','AC:L','PR:N','UI:N'))
+    return Event(kind, data['summary'], data['html_url'], data['published_at'], 'security',
         {'description': data.get('description', ''), 'vulnerabilities': data.get('vulnerabilities', []),
-         'cvss': data.get('cvss', {}), 'severity': data['severity']})
+         'cvss': data.get('cvss', {}), 'severity': data['severity'], 'easy_to_exploit':easy})

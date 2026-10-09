@@ -28,3 +28,16 @@ def test_incomplete_results_not_zero():
         lambda _: httpx.Response(200, json={'items': [], 'incomplete_results': True}))))
     with pytest.raises(GitHubError, match='Incomplete'):
         client.search('issues', 'repo:a/b')
+
+
+def test_repository_transfer_redirect_and_untrusted_redirect():
+    def respond(request):
+        if request.url.path == '/repos/old/repo':
+            return httpx.Response(301,headers={'location':'https://api.github.com/repositories/123'})
+        return httpx.Response(200,json={'id':123,'full_name':'new/repo'})
+    client = GitHubClient('fake',httpx.Client(transport=httpx.MockTransport(respond)))
+    assert client.repository('old/repo')['id'] == 123
+    client = GitHubClient('fake',httpx.Client(transport=httpx.MockTransport(
+        lambda _:httpx.Response(301,headers={'location':'https://untrusted.invalid/'}))))
+    with pytest.raises(GitHubError,match='Unsafe'):
+        client.repository('old/repo')

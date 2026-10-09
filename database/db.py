@@ -14,6 +14,10 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+class DuplicateRunError(ValueError):
+    pass
+
+
 class Database:
     def __init__(self, path):
         if str(path) != ':memory:':
@@ -29,8 +33,16 @@ class Database:
 
     @contextmanager
     def transaction(self):
-        with self.connection:
+        # Savepoints preserve atomicity when persistence helpers are nested.
+        name = 'tx_' + uuid4().hex
+        self.connection.execute(f'SAVEPOINT {name}')
+        try:
             yield self
+            self.connection.execute(f'RELEASE SAVEPOINT {name}')
+        except Exception:
+            self.connection.execute(f'ROLLBACK TO SAVEPOINT {name}')
+            self.connection.execute(f'RELEASE SAVEPOINT {name}')
+            raise
 
     def rows(self, sql, params=()):
         return [dict(row) for row in self.connection.execute(sql, params)]
@@ -93,8 +105,8 @@ class Database:
         """Serialize claims so cron/manual overlap cannot duplicate a weekly delivery."""
         self.connection.execute('BEGIN IMMEDIATE')
         try:
-            if self.rows('SELECT 1 FROM automation_runs WHERE period_end=? AND mode=?', (end,'live')):
-                raise ValueError('This weekly live run already exists; automatic resend is disabled')
+            if self.rows('SELECT 1 FROM automation_runs WHERE julianday(period_end)=julianday(?) AND mode=?', (end,'live')):
+                raise DuplicateRunError('This weekly live run already exists; automatic resend is disabled')
             return self.start_run(start,end,'live')
         except Exception:
             self.connection.rollback()

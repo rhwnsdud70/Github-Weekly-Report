@@ -32,12 +32,16 @@ PR_SIGNAL_COUNT = 10
 # Quantitative fallback for the qualitative community scale (spec 12.5).
 COMMUNITY_GROWTH_BUCKETS = ((200, 5), (100, 4), (50, 3), (25, 2), (0.000001, 1), (0, 0))
 CANDIDATE_LIMIT = 40
+SNAPSHOT_BOUNDARY_TOLERANCE_SECONDS = 3600
 SHORTLIST_LIMIT = 10
 TOP_COUNT = 5
 SECURITY_PRIORITY_WEIGHTS = {'actively_exploited': 12, 'easy_to_exploit': 5,
     'widespread_impact': 5, 'ecosystem_impact': 5, 'urgent': 5, 'unpatched': 3}
+SECURITY_PROJECT_SCALE = ((50000,3),(10000,2),(2000,1))
 WATCHLIST_LIMIT = 3
 DEEP_LIMITS = {'issues': 3, 'discussions': 2, 'pulls': 2, 'releases': 2}
+DEEP_DOCUMENT_CHAR_LIMIT = 6000
+DEEP_TOTAL_CHAR_LIMIT = 50000
 TELEGRAM_LIMIT = 4096
 TELEGRAM_ATTEMPTS = 3
 TELEGRAM_DELAY = 1

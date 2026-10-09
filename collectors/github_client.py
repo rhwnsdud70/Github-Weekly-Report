@@ -25,7 +25,7 @@ class GitHubClient:
     def close(self):
         self.client.close()
 
-    def request(self, path, params=None, body=None):
+    def request(self, path, params=None, body=None, _redirects=0):
         url = path if path.startswith('https://') else 'https://api.github.com/' + path.lstrip('/')
         if urlparse(url).netloc != 'api.github.com':
             raise GitHubError('Untrusted GitHub API host')
@@ -43,6 +43,11 @@ class GitHubClient:
                  'retry-after' in response.headers or 'rate limit' in response.text.lower()))
             if limited:
                 raise RateLimitError('GitHub rate limit reached; source unavailable for this run')
+            if response.status_code in {301,302,307,308}:
+                location = response.headers.get('location','')
+                if _redirects >= 3 or not location.startswith('https://api.github.com/'):
+                    raise GitHubError('Unsafe or excessive GitHub API redirect')
+                return self.request(location,params,body,_redirects+1)
             if response.status_code >= 500 and attempt < 2:
                 self.sleep(2 ** attempt)
                 continue

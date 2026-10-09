@@ -57,7 +57,7 @@ def calculate_metrics(candidate, period):
     metrics['activity'] = Metric.known(sum(current), 'issues + PRs') if all(x is not None for x in current) else Metric()
     metrics['activity_growth'] = growth(metrics['activity'].value,
         sum(previous) if all(x is not None for x in previous) else None, 'combined weekly activity')
-    snapshot = candidate.previous.get('snapshot') or {}
+    snapshot = (candidate.previous.get('snapshot') or {}) if candidate.previous.get('snapshot_usable',True) else {}
     forks = candidate.repository.forks
     metrics['fork_delta'] = (Metric.known(forks-snapshot['forks'], 'weekly snapshots')
         if forks is not None and snapshot.get('forks') is not None else Metric())
