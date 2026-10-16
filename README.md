@@ -162,6 +162,8 @@ Telegram 전송 성공 후에도 R2 업로드가 확인되지 않으면 전체 �
 
 관련 테스트는 `python -m pytest -q tests/test_weekly_live_once.py tests/test_r2_persistence.py`이며 실제 GitHub/OpenAI/Telegram/R2 호출은 없습니다. Runner 단독 검증에는 Scheduler 실행과 실제 API 테스트를 포함하지 않습니다.
 
+Production `InsufficientCandidates` 발생 시 콘솔에서 Candidate funnel / Exclusion reasons / Data gaps를 확인합니다. 신규 실패 run의 기존 `automation_runs.report` JSON에도 안전한 집계가 보존됩니다. [기간·Cold Start·진단 해석 및 운영 판단](docs/PRODUCTION_CANDIDATE_DIAGNOSTICS.md)을 참고하세요. 과거 실패 claim을 지우거나 같은 주차를 재실행하여 진단을 재생성하지 않습니다.
+
 ## GitHub Actions 수동 검증 및 운영 활성화
 
 `.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. Workflow 파일을 기본 브랜치에 반영한 뒤 GitHub의 **Actions → GitHub Weekly Report → Run workflow**에서 mode를 선택합니다. 현재는 `workflow_dispatch`만 활성화되어 자동 발송되지 않습니다.

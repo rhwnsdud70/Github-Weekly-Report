@@ -5,9 +5,46 @@ from config import rules
 
 
 MAJOR_METRICS = (
-    'star_delta', 'star_growth_rate', 'issues', 'pulls', 'trending',
+    'star_delta', 'star_growth', 'issues', 'pulls', 'trending',
     'releases_checked', 'security_checked',
 )
+
+FUNNEL_FIELDS = ('discovered', 'deduplicated', 'metrics attempted', 'metrics completed',
+                 'relevance eligible', 'evidence supported', 'scoring eligible', 'selectable')
+EXCLUSION_REASONS = frozenset({
+    'ai_developer_relevance_not_established', 'insufficient_independent_evidence',
+    'score_below_threshold', 'duplicate_repository',
+    'previously_reported_without_meaningful_change', 'metric_unavailable',
+    'security_evidence_insufficient', 'validation_failed', 'other'})
+GAP_FIELDS = ('previous_snapshot_missing', 'previous_snapshot_unusable',
+              'star_delta_unknown', 'star_growth_unknown', 'activity_unavailable')
+DIAGNOSTIC_KINDS = frozenset({'NO_DISCOVERY_CANDIDATES', 'METRIC_COLLECTION_DEGRADED',
+                            'INSUFFICIENT_EVIDENCE', 'INSUFFICIENT_ELIGIBLE_CANDIDATES'})
+
+
+def candidate_diagnostic_summary(diagnostic):
+    """Allowlisted aggregates only, safe for production console and run persistence.
+
+    Do not echo arbitrary exception payloads, source error messages or evidence.
+    Old exceptions without diagnostics remain supported without guessing counts.
+    """
+    if (not isinstance(diagnostic,dict) or not isinstance(diagnostic.get('kind'),str)
+            or diagnostic['kind'] not in DIAGNOSTIC_KINDS):
+        return None
+    funnel = diagnostic.get('funnel')
+    if not isinstance(funnel,dict) or any(type(funnel.get(key)) is not int or funnel[key] < 0
+                                         for key in FUNNEL_FIELDS):
+        return None
+    def counts(value, allowed):
+        if not isinstance(value,dict):
+            return {}
+        return {key:value[key] for key in sorted(allowed)
+                if type(value.get(key)) is int and value[key] >= 0}
+    return {'kind':diagnostic['kind'], 'funnel':{key:funnel[key] for key in FUNNEL_FIELDS},
+            'exclusion_reasons':counts(diagnostic.get('exclusion_reasons'),EXCLUSION_REASONS),
+            'data_gaps':counts(diagnostic.get('data_gaps'),GAP_FIELDS),
+            'historical_trending_unavailable':diagnostic.get('historical_trending_unavailable') is True,
+            'top_candidates':[]}
 
 
 def canonical_reason(reason):
@@ -100,6 +137,19 @@ def build_candidate_diagnostics(candidates, collector_counts=None, metric_candid
             reasons['metric_unavailable'] += 1
 
     details = []
+    gaps = Counter()
+    for candidate in candidates:
+        snapshot = candidate.previous.get('snapshot')
+        if not snapshot:
+            gaps['previous_snapshot_missing'] += 1
+        elif candidate.previous.get('snapshot_usable') is False:
+            gaps['previous_snapshot_unusable'] += 1
+        for name in ('star_delta', 'star_growth'):
+            if candidate.metric(name).status == 'unknown':
+                gaps[name+'_unknown'] += 1
+        if candidate.repository.identity in attempted_ids and any(
+                candidate.metric(name).status == 'unavailable' for name in ('issues','pulls')):
+            gaps['activity_unavailable'] += 1
     if len(selectable) < rules.TOP_COUNT:
         ordered = sorted(candidates, key=lambda item: item.score.total if item.score else -1,
                          reverse=True)[:10]
@@ -122,6 +172,7 @@ def build_candidate_diagnostics(candidates, collector_counts=None, metric_candid
         'kind': _diagnostic_kind(funnel),
         'funnel': funnel,
         'exclusion_reasons': dict(sorted(reasons.items())),
+        'data_gaps': dict(sorted(gaps.items())),
         'historical_trending_unavailable': bool(historical_trending_unavailable),
         'top_candidates': details,
     }
@@ -139,7 +190,10 @@ def format_candidate_diagnostics(diagnostic):
         lines.extend(f'- {name}: {count}' for name, count in diagnostic['exclusion_reasons'].items())
     else:
         lines.append('- none: 0')
-    if diagnostic['top_candidates']:
+    if diagnostic.get('data_gaps'):
+        lines.append('Data gaps (counts may overlap):')
+        lines.extend(f'- {name}: {count}' for name, count in diagnostic['data_gaps'].items())
+    if diagnostic.get('top_candidates'):
         lines.append('Top candidate diagnostics:')
         for item in diagnostic['top_candidates']:
             reasons = ','.join(item['exclusion_reasons']) or 'none'

@@ -7,7 +7,9 @@ from database.transmission_log_store import transmission_logger, transmission_st
 from models.domain import Metric, WeeklyReport
 from models.serialization import dumps, candidate_from_dict
 from services.candidate_service import CandidateCollector
-from services.candidate_diagnostics import build_candidate_diagnostics, format_candidate_diagnostics
+from services.candidate_diagnostics import (
+    build_candidate_diagnostics, candidate_diagnostic_summary, format_candidate_diagnostics,
+)
 from services.deep_analysis_service import DeepAnalysisCollector
 from services.duplicate_service import merge_candidates, allow_repeat
 from services.evidence_service import structure_evidence
@@ -62,6 +64,7 @@ class ReportPipeline:
                   db.start_run(start,end,mode))
         candidates = []
         metric_candidates = []
+        failure_diagnostics = None
         collector = CandidateCollector(self.github,self.web)
         measured_at = self.clock().isoformat()
         try:
@@ -127,6 +130,7 @@ class ReportPipeline:
                 (Path(output)/'candidate_diagnostics.json').write_text(
                     json.dumps(diagnostic,ensure_ascii=False,indent=2),encoding='utf-8')
                 error.diagnostics = diagnostic
+                failure_diagnostics = candidate_diagnostic_summary(diagnostic)
                 logger.error('%s',format_candidate_diagnostics(diagnostic))
                 raise
             if structure_only:
@@ -179,7 +183,9 @@ class ReportPipeline:
             except Exception as storage_error:
                 logger.error('Observation recovery failed: %s',type(storage_error).__name__)
             try:
-                db.finish_run(run_id,'FAILED',error=f'{type(error).__name__}: report not completed; see diagnostics')
+                db.finish_run(run_id,'FAILED',
+                    report={'candidate_diagnostics':failure_diagnostics} if failure_diagnostics else None,
+                    error=f'{type(error).__name__}: report not completed; see diagnostics')
             except Exception as storage_error:
                 logger.error('Failed status could not be stored: %s',type(storage_error).__name__)
             logger.error('Run %s failed: %s',run_id,type(error).__name__)

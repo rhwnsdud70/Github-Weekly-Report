@@ -137,7 +137,7 @@ def test_explicit_bootstrap_initializes_production_and_uploads(tmp_path):
     assert PRODUCTION_KEY in remote.objects
 
 
-def test_real_insufficient_candidates_persists_failed_claim_to_r2(tmp_path):
+def test_real_insufficient_candidates_persists_failed_claim_to_r2(tmp_path,capsys):
     period = report_period(NOW)
     backend = DemoBackend(period,10)
     original = backend.respond
@@ -175,6 +175,21 @@ def test_real_insufficient_candidates_persists_failed_claim_to_r2(tmp_path):
     assert not database.rows('SELECT * FROM report_history')
     assert not database.rows('SELECT * FROM watchlist')
     assert not database.rows('SELECT * FROM telegram_logs')
+    import json
+    summary = json.loads(database.rows('SELECT report FROM automation_runs')[0]['report'])['candidate_diagnostics']
+    # The mock includes one mandatory Critical repository, still fewer than five.
+    assert summary['funnel']['evidence supported'] == 1
+    assert summary['funnel']['selectable'] == 1
+    assert summary['exclusion_reasons']['insufficient_independent_evidence'] > 0
+    assert summary['data_gaps']['previous_snapshot_missing'] > 0
+    assert summary['top_candidates'] == []
+    assert database.rows('SELECT * FROM weekly_snapshots')  # Existing failure observation policy.
+    output = capsys.readouterr().out
+    assert 'Candidate funnel:' in output
+    assert 'Exclusion reasons:' in output and 'Data gaps' in output
+    assert 'insufficient_independent_evidence' in output
+    for secret in ('dummy-github','dummy-openai','dummy-telegram','dummy-chat','dummy-access','dummy-secret'):
+        assert secret not in output
     database.close()
 
 

@@ -18,6 +18,7 @@ from services.narrative_service import OpenAIJSONClient
 from services.pipeline import ReportPipeline
 from services.r2_persistence import R2DatabaseStore, R2PersistenceError
 from services.ranking_service import InsufficientCandidates
+from services.candidate_diagnostics import candidate_diagnostic_summary, format_candidate_diagnostics
 from services.scheduler import KST, report_period
 from telegram.sender import TelegramSender
 
@@ -138,9 +139,14 @@ def run_weekly_live_once(settings, *, allow_initial_bootstrap=False, output='art
                     emit('Production Claim: ALREADY_CLAIMED (atomic guard); Pipeline/send blocked')
                     emit('R2 upload: SKIPPED (existing claim unchanged)')
                     return finish('SKIPPED_ALREADY_CLAIMED',0)
-                except InsufficientCandidates:
+                except InsufficientCandidates as error:
                     pipeline_status = 'FAILED'
                     emit('Pipeline: FAILED; InsufficientCandidates (handled application failure)')
+                    diagnostic = candidate_diagnostic_summary(getattr(error,'diagnostics',None))
+                    if diagnostic is not None:
+                        emit(format_candidate_diagnostics(diagnostic))
+                    else:
+                        emit('Candidate diagnostics: UNAVAILABLE; no aggregate payload supplied; counts not inferred')
                     terminal = terminal_claim_confirmed(database,period,'FAILED')
                 else:
                     pipeline_status = result.get('status')

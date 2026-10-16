@@ -9,7 +9,7 @@ from services.ranking_service import select_top
 def candidate(index, *, reasons=(), signals=('star', 'activity'), unavailable=False, score=50):
     metrics = {
         'star_delta': Metric.known(100),
-        'star_growth_rate': Metric.known(10),
+        'star_growth': Metric.known(10),
         'issues': Metric(None, 'unavailable') if unavailable else Metric.known(12),
         'pulls': Metric.known(7),
         'trending': Metric(),

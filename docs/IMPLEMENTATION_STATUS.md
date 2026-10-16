@@ -1,16 +1,18 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: 기존 로컬 운영 SQLite DB의 R2 최초 이전 전용 명령 및 Mock 검증
-- 현재 진행 중인 Phase: Windows PowerShell에서 실제 R2 최초 이전 실행 대기, production 실행 및 예약 자동 실행 비활성
+- 마지막으로 완료된 Phase: Production InsufficientCandidates 코드 점검 및 운영 console/실패 run 집계 진단 보존
+- 현재 진행 중인 Phase: 수정본 Actions validate 및 정규 운영 활성화 판단 대기; 이번 작업에서 schedule/production 실행 없음
 - 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow, R2 최초 이전 전용 bootstrap
-- 아직 구현하지 않은 기능: 이번 최초 이전 준비 범위의 미완성 코드/TODO 없음. 실제 R2 이전/production 실행/예약 활성화는 미수행.
-- 현재 실패 중인 테스트: 없음. 사용자 확인 Actions validate의 dependencies/configuration/offline tests 성공, production skipped. 로컬 전체 pytest 362 passed.
-- 알려진 문제: Codex 환경은 외부 API/패키지 다운로드가 차단되며 boto3/botocore 미설치. R2/Runner는 Mock 검증만 완료. R2는 분산 잠금이 아니므로 전체 restore→run→upload의 외부 직렬화가 필요하며, 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험을 수동 점검해야 함.
-- 다음 작업: 로컬/원격 writer를 중지하고 로컬 .env의 운영 DB/R2 설정 확인 후 `python scripts/bootstrap_r2_database.py`를 PowerShell에서 실행. SUCCESS와 원격 크기/SHA-256 일치를 확인한 뒤 별도 단계에서 Actions production 수동 검증. 정규 schedule은 아직 활성화하지 않음.
-- 실행 방법: 저장소 루트에서 `python scripts/bootstrap_r2_database.py`. 기존 운영 DB를 이전하며 신규 초기화용 One-shot 옵션과 다름. 원격 객체가 있으면 거부하며 force/delete 옵션 없음. GitHub/OpenAI/Telegram/Pipeline을 호출하지 않음.
-- 테스트 방법: `python -m pytest -q tests/test_r2_bootstrap.py tests/test_r2_persistence.py` (**55 passed**), `python -m pytest -q` (**362 passed in 6.47s**). 실제 API 호출 없음.
+- 아직 구현하지 않은 기능: 이번 진단 개선 범위의 미완성 코드/TODO 없음. 사용자 확인 실제 R2 이전 및 Actions production 연결 성공; 정규 schedule 활성화는 미수행. 해당 실패 주차 상세 funnel은 로컬에 없어 수치 확정 불가.
+- 현재 실패 중인 테스트: 없음. 로컬 전체 pytest 381 passed. 사용자 확인 production은 InsufficientCandidates로 APPLICATION_FAILED이며 SQLite finalize/R2 upload 성공; TOP5 생성 성공을 의미하지 않음.
+- 알려진 문제: Cold Start/경계 후 1시간 초과 관측으로 Star 비교가 unknown일 수 있으며 정규 실행도 근거 부족 시 실패할 수 있음. 최신 R2 DB는 이번 점검에서 접근하지 않음. R2는 분산 잠금이 아니므로 외부 직렬화 필요. 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험은 수동 점검해야 함.
+- 다음 작업: 수정본 Push 후 Actions mode=validate 확인. 초기 정규 운영에서는 1시간 이내 Trending 수집 및 independent evidence/metrics/data gaps 진단 관찰. 2026-10-11 종료 FAILED claim 유지/동일 주차 재실행 금지. schedule 활성화는 별도 명시적 작업으로 진행.
+- 실행 방법: 이번 점검은 오프라인 pytest만 실행. production entry는 기존 `python scripts/run_weekly_live_once.py` 그대로이며 기존 claim이면 API 전 차단. 향후 진단은 Actions console 및 신규 실패 run의 `automation_runs.report.candidate_diagnostics`에서 확인. 분석 문서: `docs/PRODUCTION_CANDIDATE_DIAGNOSTICS.md`.
+- 테스트 방법: 진단/runner/history/scheduler/R2 Mock **91 passed in 3.14s**; 전체 `python -m pytest -q` **381 passed in 7.95s**; Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 외부 API 미호출.
 
 ## Phase 검증 기록
+
+- Production 후보 부족 진단 (2026-10-16): 사용자 제공 Actions 결과상 10/04~10/11 주차는 FAILED terminal claim 및 R2 업로드 정상. 10/16의 과거 주차 실행은 3600초 조건상 Trending 제외임을 코드로 확인했으나 최신 R2 DB/해당 artifact 없이 후보별 사유는 확정하지 않음. 로컬 DB는 immutable read-only 집계만 확인했으며 10/11 run 없음; 로컬 artifact는 9/06~9/13로 이번 주차와 다름. FileHandler 전용 logger/로컬 artifact에만 있던 진단을 One-shot console에 allowlist 집계로 전달하고 신규 실패 run의 기존 report JSON에 저장. data gaps 추가 및 진단 metric key를 실제 star_growth로 수정. 기존 Snapshot/점수/독립 근거/재소개/claim/R2/기간/전송 정책 불변. 0/5분/1시간/1시간 초과/5일 Trending 조건, Cold Start와 GraphQL 이전 활동, 지연 Snapshot 사용 불가 및 FAILED 관측 보존을 Mock 검증. 관련91/전체381 통과. 다음: validate 후 초기 운영 관찰 조건으로 별도 schedule 활성화 판단.
 
 - R2 최초 이전 준비 (2026-10-16): 기존 `upload()`는 원격 DB 교체용이므로 그대로 재사용하지 않고 `R2DatabaseStore.bootstrap()` 및 `scripts/bootstrap_r2_database.py` 추가. 기존 schema/integrity/fixture 검증과 WAL checkpoint/export 재사용. strict NoSuchKey+404만 최초 객체 없음으로 인정하며 기존 객체는 거부. `IfNoneMatch='*'` 조건부 생성으로 racing writer의 객체도 교체하지 않음. export 백업을 DB 옆 `r2-bootstrap-backups/`에 성공/실패 모두 보존하고, 업로드 후 GET으로 ContentLength/실제 크기/SHA-256 검증. 원격 삭제/강제 덮어쓰기 옵션 없음. 관련 Mock **55 passed**, 전체 **362 passed in 6.47s**, 변경 Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 실제 API 미호출; production DB/claim/선정/Scheduler/전송 로직 변경 없음. 다음: 사용자 PowerShell에서 최초 이전 후 별도 production 수동 검증.
 
