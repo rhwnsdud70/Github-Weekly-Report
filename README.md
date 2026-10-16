@@ -183,6 +183,24 @@ Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram ret
 
 구조/안전 경계 테스트는 `python -m pytest -q tests/test_weekly_workflow.py`로 실행합니다. 이 저장소 작업에서는 Workflow dispatch/production 실행/예약 활성화를 수행하지 않았습니다.
 
+Offline configuration step이 실패하면 콘솔의 아래 코드를 확인합니다. 변수명/고정 category만 출력하며 Secret 값, 일부 문자, 길이, 접두사, 예외 원문은 출력하지 않습니다. 여러 설정 오류는 함께 표시합니다.
+
+| 진단 | 확인 사항 |
+|---|---|
+| `MISSING_ENV: <변수명>` | 위 매핑 표에 맞는 Repository Actions Secret이 존재하고 해당 step에 전달되는지 확인합니다. `GITHUB_TOKEN` 누락이면 Secret 이름은 `GH_API_TOKEN`입니다. |
+| `INVALID_FORMAT: R2_ENDPOINT` | 기존 Settings 규칙상 HTTPS S3 base endpoint여야 합니다. Bucket 경로, query, fragment, user/password를 포함할 수 없습니다. Root의 `/`는 허용됩니다. 값을 잘라 자동 보정하지 않습니다. |
+| `INVALID_FORMAT: DATABASE_PATH` | Workflow에서 고정한 `data/github_weekly_report.db`인지 확인합니다. 실제 설정 경로 값은 로그에 출력하지 않습니다. |
+| `INVALID_FORMAT: TIMEZONE` | `Asia/Seoul`이어야 합니다. |
+| `LOCAL_DB_EXISTS: DATABASE_PATH` | checkout에 운영 DB가 섞였거나 앞 단계가 생성했는지 확인합니다. 파일을 자동 삭제하지 않습니다. |
+| `LOCAL_WAL_EXISTS`, `LOCAL_SHM_EXISTS`, `LOCAL_JOURNAL_EXISTS` | 같은 운영 DB의 sidecar가 존재합니다. 원본 파일을 보존하고 출처를 점검합니다. |
+| `SETTINGS_VALIDATION_FAILED: LIVE_SETTINGS` / `R2_SETTINGS` | 해당 Settings 검증기의 예상 밖 오류입니다. 예외 원문은 숨깁니다. |
+| `SETTINGS_VALIDATION_FAILED: SETTINGS_LOAD` | Settings 로딩 단계에서 실패했습니다. `.env`/환경설정의 timezone 및 빈 DB 경로 등을 확인합니다. |
+| `SETTINGS_VALIDATION_FAILED: LOCAL_STATE_CHECK` / `WORKING_DIRECTORY` / `UNEXPECTED_VALIDATOR_ERROR` | 파일 접근/실행 위치/검증기 오류를 확인합니다. |
+
+현재 `.gitignore`의 `data/*`는 운영 DB와 WAL/SHM/journal을 모두 제외하고 `.env`도 별도로 제외합니다. Git에 이미 추적된 파일에는 ignore가 소급 적용되지 않으므로 `git ls-files -- '*.db' '*.sqlite' '*.sqlite3' '*-wal' '*-shm' '*-journal' '.env'`로 이름만 확인합니다. 추적 파일이 있으면 로컬 원본을 보존한 뒤 검토를 거쳐 Git 추적만 해제해야 하며, validator는 삭제/덮어쓰기/추적 해제를 수행하지 않습니다.
+
+수정본을 Push한 뒤 **Actions → GitHub Weekly Report → Run workflow → 수정이 반영된 브랜치 → mode=validate**로 새 검증을 실행합니다. 검증은 실제 서비스 인증/발송/운영 DB 변경 없이 수행하며, 진단이 사라졌다고 해서 production의 R2 연결이나 발송 성공이 보장되는 것은 아닙니다. Production 모드에도 동일한 필수 환경변수와 기존 설정 검증을 적용합니다.
+
 ## 비용 없는 Dry Run
 
 모든 Repository·사건·수치·LLM 응답은 명시적인 합성 Fixture입니다. HTTP 요청은 `httpx.MockTransport` 안에서만 처리되며 실제 API 호출과 Telegram 발송은 없습니다. 운영 DB와 별도의 `출력폴더/dry-run.sqlite`를 사용합니다.

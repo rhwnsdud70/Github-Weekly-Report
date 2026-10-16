@@ -1,14 +1,14 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: GitHub Actions Workflow 구현 및 YAML/offline 회귀 검증
-- 현재 진행 중인 Phase: Workflow 수동 validate/production 검증 대기, 예약 자동 실행 비활성
+- 마지막으로 완료된 Phase: GitHub Actions Offline Configuration의 안전한 상세 진단 및 회귀 검증
+- 현재 진행 중인 Phase: 수정본 Push 후 Workflow validate 재실행 대기, 예약 자동 실행 비활성
 - 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow
 - 아직 구현하지 않은 기능: 이번 Workflow 요청 범위의 미완성 코드/TODO 없음. GitHub-hosted 실행/실제 R2 연결 검증과 예약 활성화는 미수행.
-- 현재 실패 중인 테스트: 없음
+- 현재 실패 중인 테스트: 로컬 pytest 실패 없음. 사용자가 실행한 GitHub validate는 설정 검사에서 실패했으며 상세 진단 적용 후 재확인 대기.
 - 알려진 문제: Codex 환경은 외부 API/패키지 다운로드가 차단되며 boto3/botocore 미설치. R2/Runner는 Mock 검증만 완료. R2는 분산 잠금이 아니므로 전체 restore→run→upload의 외부 직렬화가 필요하며, 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험을 수동 점검해야 함.
-- 다음 작업: 기본 브랜치 반영 후 Actions의 GitHub Weekly Report를 기본 mode=validate로 수동 검증. 운영 R2 DB 존재/최초 bootstrap 여부를 별도 확인하고 의도한 production 수동 1회 성공 후 schedule 주석 해제 및 상태/수동 전용 trigger 테스트 갱신. Artifact 업로드는 비활성 유지.
+- 다음 작업: 수정본 Push 후 Actions의 GitHub Weekly Report → Run workflow → 업데이트된 브랜치 → mode=validate로 새 실행. MISSING_ENV/INVALID_FORMAT/LOCAL_*_EXISTS 진단에 따라 값은 공유하지 않고 해당 설정만 점검. validate 성공 전 Production 실행/예약 활성화 금지, Artifact 업로드는 비활성 유지.
 - 실행 방법: GitHub Actions → GitHub Weekly Report → Run workflow → validate(기본). production을 명시적으로 선택할 때만 기존 `python scripts/run_weekly_live_once.py`가 실제 API를 사용함. Workflow는 bootstrap을 허용하지 않으며 Codex에서는 실행하지 않음.
-- 테스트 방법: `& 'C:/Users/고준영/.pyenv/pyenv-win/versions/3.11.9/python.exe' -m pytest -q` (현재 **312 passed in 4.33s**)
+- 테스트 방법: `& 'C:/Users/고준영/.pyenv/pyenv-win/versions/3.11.9/python.exe' -m pytest -q` (현재 **336 passed in 4.54s**)
 
 ## Phase 검증 기록
 
@@ -193,3 +193,9 @@
 - 진단은 always Job Summary에 고정 step outcome만 기록한다. raw logs/evidence/artifacts, .env, SQLite DB/WAL/SHM을 업로드하는 action은 추가하지 않았다. 운영 DB 영구 저장은 R2만 담당한다. hosted runner 로컬 DB/로그는 종료 후 보존되지 않으므로 production 실패/timeout/취소 시 원격 claim/실제 전송 상태를 확인하기 전에 재실행하지 않도록 Summary와 README에 명시했다.
 - 구조/안전 테스트 **16 passed in 0.38s**, 전체 pytest **312 passed in 4.33s**, Python compile 및 `git diff --check` 통과. YAML parse, 정확한 Secrets 매핑/Settings 연계, Python/Ubuntu/command/timeout, disabled KST schedule, queue/concurrency, mode gate/exit 실패 보존, non-production 명령 부재, Artifact 미업로드, offline validator의 무API/무DB/Secret 비노출을 확인했다. 현재 실패 테스트 없음.
 - 현재 작업의 실제 실행 범위: 로컬 구현과 Mock/offline 테스트만 수행. GitHub Workflow publish/dispatch, GitHub API/R2/OpenAI/Telegram 실제 호출, Scheduler 등록/실행, production 전송 및 예약 활성화는 수행하지 않았다. 다음 단계는 기본 브랜치 반영 후 수동 validate→R2 production DB/초기화 상태 확인→의도된 production 수동 검증이며, 성공 확인 후 별도 활성화 커밋에서 schedule 주석과 수동 전용 상태 테스트를 갱신한다.
+- Offline Configuration 진단 보완: 사용자의 실제 Actions validate가 checkout/Python/dependency 설치 후 설정 검사에서 일반 오류로 실패했다. 해당 메시지는 기존 validate_deployment의 live 설정/R2 endpoint/DB path/timezone/local DB·sidecar 검사 중 하나가 실패했다는 뜻이며 dependency import 이전에 발생했다. 현재 Workflow의 8개 매핑은 Settings와 일치하고 GH_API_TOKEN→GITHUB_TOKEN도 올바르다. DATABASE_PATH와 TIMEZONE은 Workflow에서 정상 값으로 고정된다. `git ls-files` 검사에서 DB/SQLite/WAL/SHM/journal/.env 추적 파일은 없고 `git check-ignore`로 data/github_weekly_report.db와 sidecar가 data/*에 제외됨을 확인했다. 원격 Secret을 읽거나 어떤 로컬/추적 파일도 삭제하지 않았다.
+- 가장 유력한 코드상 점검 대상은 R2_ENDPOINT의 엄격한 형식 검사(HTTPS base URL, path는 빈 값 또는 root /만 허용, query/fragment/user/password 금지) 또는 Secret이 실제 step에 비어 전달되는 경우다. 특히 bucket 경로를 포함한 endpoint는 기존 코드가 거부한다. 원격 Secret 값이나 당시 구체적인 분기가 기록되지 않았으므로 실제 원인을 단정하지 않는다. 설정 기준을 완화하거나 endpoint를 자동 절단/보정하지 않았다.
+- 변경: scripts/validate_weekly_deployment.py에 configuration_diagnostics를 추가해 MISSING_ENV:<정확한 환경변수명>, INVALID_FORMAT:R2_ENDPOINT/DATABASE_PATH/TIMEZONE, LOCAL_DB_EXISTS/LOCAL_WAL_EXISTS/LOCAL_SHM_EXISTS/LOCAL_JOURNAL_EXISTS:DATABASE_PATH 및 allowlist SETTINGS_VALIDATION_FAILED category를 출력한다. 여러 오류는 함께 보고한다. 값/일부 문자/길이/접두사/예외 원문은 출력하지 않는다. main의 설정 로딩·실행 위치·예상 밖 validator 오류도 안전한 category로 구분했다. 기존 Workflow/config.settings/production runner/.gitignore는 변경하지 않았다.
+- validate는 계속 운영 필수 Secret 전체를 요구하고 Settings.validate_live(send=True), Settings.validate_r2의 기존 정책과 production path/timezone/local state 제약을 유지한다. 실패 시 SDK import/외부 호출 이전에 중단하며 정상 validate도 API client 생성/DB opening/production pipeline 실행을 하지 않는다. README에 진단별 점검 방법, Secret 매핑, 추적 파일 점검 및 새 validate 실행 절차를 추가했다.
+- 테스트: 필수 변수 8개 각각 누락 이름 확인, 여러 누락 동시 출력, endpoint의 path/query/credentials/HTTP/bare host/malformed IPv6 오류 비노출, DATABASE_PATH/TIMEZONE 분리, DB/WAL/SHM/journal 종류별 차단과 파일 원본 보존, 예상 밖 Settings/로드 오류의 category 확인을 추가했다. 기존 정상 validate/무API/무DB/Secret 비노출 및 Production/Scheduler 회귀 테스트를 포함해 관련 **74 passed in 1.60s**, 전체 **336 passed in 4.54s**. 로컬 실패 테스트 없음. Python compile 및 git diff --check 통과.
+- 다음 작업: 변경 파일을 GitHub에 Push한 후 업데이트된 브랜치의 workflow_dispatch mode=validate를 새로 실행해 정확한 category/변수명을 확인한다. 실제 GitHub validate 성공은 아직 확인하지 않았다. 이번 작업에서 Push/Workflow 실행/Production/Scheduler 활성화 및 GitHub/R2/OpenAI/Telegram API 호출은 하지 않았다.

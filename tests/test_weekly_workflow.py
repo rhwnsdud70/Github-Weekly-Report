@@ -194,3 +194,93 @@ def test_validate_rejects_wrong_python_or_missing_project_files(tmp_path):
     assert validate_deployment(configured,root=tmp_path,python_version=(3,12)) == 1
     (tmp_path/'scripts/run_weekly_live_once.py').unlink()
     assert validate_deployment(configured,root=tmp_path,python_version=(3,11)) == 1
+
+
+@pytest.mark.parametrize('field,name',[
+    ('github_token','GITHUB_TOKEN'),('openai_api_key','OPENAI_API_KEY'),
+    ('telegram_bot_token','TELEGRAM_BOT_TOKEN'),('telegram_chat_id','TELEGRAM_CHAT_ID'),
+    ('r2_endpoint','R2_ENDPOINT'),('r2_access_key_id','R2_ACCESS_KEY_ID'),
+    ('r2_secret_access_key','R2_SECRET_ACCESS_KEY'),('r2_bucket','R2_BUCKET'),
+])
+def test_missing_environment_reports_exact_name_only(tmp_path,field,name,capsys):
+    configured = replace(deployment_fixture(tmp_path),**{field:''})
+    assert validate_deployment(configured,root=tmp_path,python_version=(3,11),
+                               module_loader=lambda _:pytest.fail('Invalid config must fail before imports')) == 1
+    text = capsys.readouterr().out
+    assert f'MISSING_ENV: {name}' in text
+    assert 'dummy-' not in text
+    assert 'secret_length' not in text and 'prefix=' not in text
+
+
+@pytest.mark.parametrize('endpoint',[
+    'https://example.r2.cloudflarestorage.com/private-bucket',
+    'https://example.r2.cloudflarestorage.com/?token=not-to-be-shown',
+    'https://account:password-never-show@r2.example.com',
+    'http://example.r2.cloudflarestorage.com',
+    'example.r2.cloudflarestorage.com',
+    'https://[malformed',
+])
+def test_invalid_endpoint_reports_format_without_value_or_fragment(tmp_path,endpoint,capsys):
+    configured = replace(deployment_fixture(tmp_path),r2_endpoint=endpoint)
+    assert validate_deployment(configured,root=tmp_path,module_loader=lambda _:object(),python_version=(3,11)) == 1
+    text = capsys.readouterr().out
+    assert 'INVALID_FORMAT: R2_ENDPOINT' in text
+    for fragment in ('https://','http://','example','private-bucket','not-to-be-shown','password-never-show','malformed'):
+        assert fragment not in text
+
+
+@pytest.mark.parametrize('suffix,category',[
+    ('','LOCAL_DB_EXISTS'),('-wal','LOCAL_WAL_EXISTS'),
+    ('-shm','LOCAL_SHM_EXISTS'),('-journal','LOCAL_JOURNAL_EXISTS'),
+])
+def test_local_state_reports_type_without_opening_or_changing_file(tmp_path,suffix,category,capsys):
+    configured = deployment_fixture(tmp_path)
+    path = tmp_path/('data/github_weekly_report.db'+suffix)
+    path.parent.mkdir()
+    path.write_bytes(b'opaque local SQLite state')
+    assert validate_deployment(configured,root=tmp_path,module_loader=lambda _:object(),python_version=(3,11)) == 1
+    assert path.read_bytes() == b'opaque local SQLite state'
+    text = capsys.readouterr().out
+    assert f'{category}: DATABASE_PATH' in text
+    assert str(path) not in text
+
+
+@pytest.mark.parametrize('change,diagnostic',[
+    ({'database_path':'data/renamed-integration.db'},'INVALID_FORMAT: DATABASE_PATH'),
+    ({'database_path':''},'MISSING_ENV: DATABASE_PATH'),
+    ({'timezone':'UTC'},'INVALID_FORMAT: TIMEZONE'),
+])
+def test_path_timezone_diagnostics_are_specific(tmp_path,change,diagnostic,capsys):
+    configured = replace(deployment_fixture(tmp_path),**change)
+    assert validate_deployment(configured,root=tmp_path,module_loader=lambda _:object(),python_version=(3,11)) == 1
+    assert diagnostic in capsys.readouterr().out
+
+
+def test_multiple_configuration_failures_are_all_reported(tmp_path,capsys):
+    configured = replace(deployment_fixture(tmp_path),openai_api_key='',r2_bucket='')
+    assert validate_deployment(configured,root=tmp_path,module_loader=lambda _:object(),python_version=(3,11)) == 1
+    text = capsys.readouterr().out
+    assert 'MISSING_ENV: OPENAI_API_KEY' in text and 'MISSING_ENV: R2_BUCKET' in text
+
+
+def test_unexpected_settings_failure_uses_allowlisted_category(tmp_path,monkeypatch,capsys):
+    configured = deployment_fixture(tmp_path)
+    def fail(*args,**kwargs):
+        raise RuntimeError('do-not-print-this-sensitive-error')
+    monkeypatch.setattr(Settings,'validate_live',fail)
+    assert validate_deployment(configured,root=tmp_path,module_loader=lambda _:object(),python_version=(3,11)) == 1
+    text = capsys.readouterr().out
+    assert 'SETTINGS_VALIDATION_FAILED: LIVE_SETTINGS' in text
+    assert 'do-not-print' not in text
+
+
+def test_settings_load_failure_never_echoes_exception_or_secrets(monkeypatch,capsys):
+    import scripts.validate_weekly_deployment as validator
+    monkeypatch.chdir(validator.ROOT)
+    def fail(*args,**kwargs):
+        raise ValueError('sensitive loaded value')
+    monkeypatch.setattr(Settings,'load',fail)
+    assert validator.main() == 1
+    text = capsys.readouterr().out
+    assert 'SETTINGS_VALIDATION_FAILED: SETTINGS_LOAD' in text
+    assert 'sensitive loaded value' not in text
