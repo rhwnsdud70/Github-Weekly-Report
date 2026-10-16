@@ -86,7 +86,7 @@ python scripts\run_full_top5_live.py --integration-test
 
 ## Cloudflare R2 SQLite 저장·복원
 
-R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 현재 CLI/Pipeline/Scheduler에 자동 연결하지 않았으며 GitHub Actions Workflow와 One-shot Runner도 아직 추가하지 않았습니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
+R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 아래 Production One-shot Runner 및 GitHub Actions 수동 Workflow에서 사용하며 기존 CLI/Pipeline/Scheduler의 동작은 유지합니다. 예약 실행은 아직 비활성 상태입니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
 
 추가 설정은 `.env.example`의 `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`입니다. 의존성은 `python -m pip install -r requirements.txt`로 설치합니다. R2 SDK는 [Cloudflare의 boto3 설정](https://developers.cloudflare.com/r2/get-started/s3/)에 맞춰 S3 endpoint와 region `auto`를 사용합니다. Key/Secret/endpoint 또는 전체 SDK 오류를 로그로 출력하지 않습니다.
 
@@ -102,7 +102,86 @@ API 사용 순서:
 
 운영 객체 전송은 설정의 `DATABASE_PATH` 한 경로에만 묶입니다. test/integration/preview/fixture DB 파일명, DB 내부의 non-live run mode, fixture snapshot/metric 출처가 있으면 업로드를 거부합니다. 파일명을 production DB처럼 바꿔도 integration-test 이력이 있으면 차단하며 restore에도 동일한 내부 검사를 적용합니다. 운영 DB에 테스트 이력을 섞지 마세요.
 
-R2 전송 자체는 여러 작업 간 분산 잠금을 제공하지 않습니다. 추후 Workflow/Runner에서 download→run→upload 전체를 단일 동시 실행으로 제한해야 기존 SQLite claim이 원격 환경에서도 유지됩니다. 이번 단계의 테스트는 실제 R2 호출 없이 `python -m pytest -q tests/test_r2_persistence.py`로 실행합니다.
+R2 전송 자체는 여러 작업 간 분산 잠금을 제공하지 않습니다. Workflow concurrency가 download→run→upload 전체를 직렬화하며, 별도 서버의 Runner를 동시에 실행하지 않아야 기존 SQLite claim이 원격 환경에서도 유지됩니다. 이 모듈의 테스트는 실제 R2 호출 없이 `python -m pytest -q tests/test_r2_persistence.py`로 실행합니다.
+
+## R2 Production One-shot Runner
+
+저장소 루트의 새 작업 환경에서 다음 명령을 실행합니다. 기본 로컬 DB는 `data/github_weekly_report.db`이고 설정의 `DATABASE_PATH`를 사용합니다. 기존 DB 또는 WAL이 있는 작업 폴더는 복원 보호에 의해 차단되며 Runner가 삭제하거나 덮어쓰지 않습니다.
+
+```powershell
+python scripts/run_weekly_live_once.py
+```
+
+최초 R2 운영 객체가 아직 없다는 사실을 확인했고 신규 운영 DB 초기화를 의도할 때만 다음 옵션을 사용합니다.
+
+```powershell
+python scripts/run_weekly_live_once.py --allow-initial-bootstrap
+```
+
+이 옵션도 인증/권한/네트워크 오류나 로컬 DB 존재 보호를 우회하지 않습니다. `NoSuchKey` + HTTP 404일 때만 신규 DB를 초기화합니다. integration-test/dry-run/preview/fixture, 과거 period override 및 force/reclaim 옵션은 제공하지 않습니다. 복원된 DB에 non-production run/fixture가 있어도 Pipeline 진입 전에 차단합니다.
+
+Runner는 설정 검증→R2 복원→기존 Scheduler의 `report_period()`로 기간 확정→live claim 사전 확인→Production Pipeline 한 번→SQLite checkpoint/close/integrity/schema 검사→R2 백업/업로드→종료 순서로 동작합니다. 대기 루프가 없습니다. 기준 시각은 시작 시 한 번 고정하고 보고 종료 시각은 가장 최근 **완료된** 일요일 19:00 KST입니다. 일요일 19:00 이전 수동 실행은 직전 일요일에 끝난 주차를 선택하며, 지연 실행도 종료 시각을 실제 실행 시각으로 바꾸지 않습니다. 조사 기간은 168시간 반개방 구간입니다.
+
+기존 SUCCESS/PARTIAL_SUCCESS/FAILED/RUNNING claim이 같은 종료 시각에 있으면 기존 row를 변경하지 않고 수집/OpenAI/Telegram client를 만들기 전에 차단합니다. Pipeline의 기존 원자적 claim 검사는 그대로 추가 적용됩니다. 정상 terminal 결과 및 처리된 `InsufficientCandidates`만 DB에 terminal claim/finished_at이 존재하는지 확인하고 업로드합니다. 예상 밖 예외는 Pipeline이 FAILED를 기록했더라도 자동 업로드하지 않습니다. 미완료 transaction은 임의 commit하지 않고 업로드를 막습니다.
+
+| 종료 코드 | 최종 상태 | R2 업로드 |
+|---|---|---|
+| 0 | `SUCCESS` | 검증 후 완료 |
+| 0 | `SKIPPED_ALREADY_CLAIMED` | 생략; 기존 claim 유지 |
+| 1 | `APPLICATION_FAILED` | terminal FAILED 기록 검증 후 완료 |
+| 2 | `PARTIAL_SUCCESS` | 부분 성공 기록 검증 후 완료 |
+| 3 | 설정/시작/복원 실패 또는 `BOOTSTRAP_REQUIRED` | 수행하지 않음 |
+| 4 | `SQLITE_FINALIZE_FAILED` / `RUN_STATE_INVALID` | 차단 |
+| 5 | `R2_UPLOAD_FAILED` | 백업/업로드 단계 실패; 성공으로 처리하지 않음 |
+| 6 | `UNEXPECTED_FAILURE` | 예상 밖 오류 후 추가 업로드하지 않음 |
+| 130 | `INTERRUPTED` | 복구 목적의 추가 업로드 없음 |
+
+Telegram 전송 성공 후에도 R2 업로드가 확인되지 않으면 전체 성공이 아닙니다. 업로드 응답 실패는 원격 반영 여부가 불확실할 수도 있습니다. 로컬 DB/WAL, `artifacts/weekly-live-once/<period-end-date>/`, `logs/weekly_report.log`를 보존하고 원격 claim/전송 로그를 확인해야 합니다. 강제 종료/예상 밖 예외로 claim을 R2에 보존하지 못한 경우도 동일합니다. Runner는 임의 claim 삭제나 발송 재시도를 수행하지 않습니다. bootstrap 옵션을 일반 자동 재시도 수단으로 사용하지 마세요.
+
+환경변수는 기존 `GITHUB_TOKEN`, OpenAI/Telegram 설정과 R2 설정을 사용합니다. Workflow에서 repository Secret `GH_API_TOKEN`을 환경변수 `GITHUB_TOKEN`으로 연결합니다. Workflow는 restore→run→upload 전체에 **production 전용 concurrency group**과 **cancel-in-progress: false**를 적용하며, 별도 서버의 실행까지 자동 직렬화되는 것은 아닙니다. 한 운영 writer만 허용해야 합니다. 실행 중 강제 종료나 원격 업로드 실패의 exactly-once 보장은 concurrency만으로 해결되지 않으므로 자동 재발송 대신 상태를 점검합니다.
+
+관련 테스트는 `python -m pytest -q tests/test_weekly_live_once.py tests/test_r2_persistence.py`이며 실제 GitHub/OpenAI/Telegram/R2 호출은 없습니다. Runner 단독 검증에는 Scheduler 실행과 실제 API 테스트를 포함하지 않습니다.
+
+## GitHub Actions 수동 검증 및 운영 활성화
+
+`.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. Workflow 파일을 기본 브랜치에 반영한 뒤 GitHub의 **Actions → GitHub Weekly Report → Run workflow**에서 mode를 선택합니다. 현재는 `workflow_dispatch`만 활성화되어 자동 발송되지 않습니다.
+
+- `validate`(기본값): Secret 존재 여부/설정 형식, production 경로, 프로젝트 파일, SDK import를 검사하고 compile/전체 pytest를 수행합니다. DB를 열거나 R2 client를 만들지 않고 수집/OpenAI/Telegram/R2 애플리케이션 API를 호출하지 않습니다. GitHub-hosted 환경 준비·의존성 설치에는 네트워크가 필요합니다. 인증 성공/원격 DB 존재 여부는 이 모드로 검증하지 않습니다.
+- `production`: 위 offline 설정 검사를 통과한 뒤 `python scripts/run_weekly_live_once.py`를 실행합니다. 실제 GitHub/OpenAI/Telegram/R2 API를 사용하며 발송할 수 있습니다. 자동 bootstrap은 없고, Runner의 nonzero 종료 코드는 Workflow 실패로 유지됩니다. 기존 claim이면 Runner가 API client 생성 전에 차단하고 안전하게 종료합니다.
+
+Secret은 설치/pytest step에 전달하지 않고, offline 설정 검사와 production 실행 step에만 다음처럼 연결합니다. 값은 출력하지 않습니다.
+
+| Repository Secret | Python 환경변수 |
+|---|---|
+| `GH_API_TOKEN` | `GITHUB_TOKEN` |
+| `OPENAI_API_KEY` | `OPENAI_API_KEY` |
+| `TELEGRAM_BOT_TOKEN` | `TELEGRAM_BOT_TOKEN` |
+| `TELEGRAM_CHAT_ID` | `TELEGRAM_CHAT_ID` |
+| `R2_ENDPOINT` | `R2_ENDPOINT` |
+| `R2_ACCESS_KEY_ID` | `R2_ACCESS_KEY_ID` |
+| `R2_SECRET_ACCESS_KEY` | `R2_SECRET_ACCESS_KEY` |
+| `R2_BUCKET` | `R2_BUCKET` |
+
+DB 경로는 `data/github_weekly_report.db`, TIMEZONE은 `Asia/Seoul`로 고정 주입합니다. 기존 실행 스크립트가 project root를 import 경로에 추가하므로 별도 PYTHONPATH 변경은 없습니다. concurrency group은 `github-weekly-report-production`, `cancel-in-progress: false`, `queue: max`이며 validate와 production 모두 같은 Workflow 경계 안에서 직렬화합니다. 대기열 보존은 [GitHub concurrency 공식 문서](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)를 기준으로 적용했습니다.
+
+Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram retry 및 R2 업로드를 포함한 전체 실행을 제한합니다. timeout/취소 시 자동 복구 발송이나 finally 업로드를 하지 않습니다. 마지막 Job Summary에는 dependencies/config/tests/production의 고정 step outcome만 기록하고, 파일 본문이나 Secret은 포함하지 않습니다. 원본 logs/artifacts, `.env`, SQLite DB/WAL/SHM은 Actions Artifact로 **업로드하지 않습니다**. package cache는 pip 캐시만 사용합니다. 운영 DB 영구 저장은 R2만 담당합니다. 업로드 실패/강제 종료 뒤 hosted runner의 로컬 DB·로그는 보존되지 않으므로 원격 claim/발송 여부를 확인하기 전 재실행하지 마세요.
+
+운영 활성화 전 순서:
+
+1. 기본 mode `validate`로 수동 실행해 설치·설정·테스트 결과와 Job Summary를 확인합니다.
+2. R2 production 객체가 존재하고 올바른 운영 DB인지 별도 확인합니다. 없는 경우에만 승인된 최초 bootstrap 절차를 별도로 수행합니다. 이 Workflow에는 bootstrap 입력이나 자동 초기화 옵션이 없습니다.
+3. 실제 발송을 의도할 때 mode `production`으로 수동 1회 실행하고 Runner의 terminal 상태, R2 upload 성공, Telegram 수신 및 claim 보존을 확인합니다.
+4. 성공 후 활성화 커밋에서 Workflow의 아래 세 줄 주석을 해제합니다. 수동 전용 상태를 검증하는 테스트와 IMPLEMENTATION_STATUS의 단계도 그때 갱신합니다. 기존 Python Scheduler는 동시에 실행하지 않습니다.
+
+```yaml
+  schedule:
+    - cron: "0 19 * * 0"
+      timezone: "Asia/Seoul"
+```
+
+예약은 일요일 19:00 KST이며 [GitHub schedule timezone 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)의 구문을 사용합니다. 현재 파일에서는 주석이라 비활성입니다. 활성화 후 schedule 이벤트는 production 경로를 선택하고, 예약이 지연돼도 기존 Runner가 가장 최근 완료된 일요일 경계를 사용합니다. 다른 서버/Workflow가 동일 R2 객체를 쓰면 같은 저장소의 concurrency만으로는 보호되지 않으므로 운영 writer를 단일화합니다.
+
+구조/안전 경계 테스트는 `python -m pytest -q tests/test_weekly_workflow.py`로 실행합니다. 이 저장소 작업에서는 Workflow dispatch/production 실행/예약 활성화를 수행하지 않았습니다.
 
 ## 비용 없는 Dry Run
 
