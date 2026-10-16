@@ -74,6 +74,36 @@ python main.py run --live --output artifacts/live
 
 처음 실행해서 비교 Snapshot이 없어도 Release·활동·보안 등 다른 근거로 평가합니다. 근거를 갖춘 프로젝트가 5개 미만이면 TOP 5를 꾸며내지 않고 FAILED로 기록합니다. 수집한 관측치는 다음 분석을 위해 저장하지만 소개 이력과 발송은 만들지 않습니다.
 
+전체 실제 전송 경로를 Cold Start와 무관하게 한 번 검증하려면 수동 전용 integration-test runner를 사용합니다.
+
+```powershell
+python scripts\run_full_top5_live.py --integration-test
+```
+
+이 명령은 실제 GitHub 후보와 선정된 TOP 5의 실제 OpenAI 분석 및 Telegram 발송을 사용하지만, 과거에 복원할 수 없는 previous snapshot·previous activity·historical Trending만 명시적인 Fixture로 보충합니다. 모든 메시지에는 `[INTEGRATION TEST]`가 표시됩니다. 점수와 TOP 5는 운영 `score_candidate()`와 ranking 규칙으로 계산하며 직접 지정하지 않습니다.
+
+데이터는 운영 `DATABASE_PATH` 대신 `data/full_integration_test.db`에만 저장되고 산출물은 `artifacts/full-integration-test/`에 생성됩니다. 같은 integration-test period는 두 번째 실행 시 GitHub/OpenAI/Telegram 호출 전에 차단됩니다. 운영 Scheduler와 `main.py run --live`에는 이 mode나 Fixture 경로가 없습니다. 다른 완료 period를 명시적으로 시험해야 할 때만 `--period-end 2026-10-11T19:00:00+09:00`처럼 함께 사용합니다.
+
+## Cloudflare R2 SQLite 저장·복원
+
+R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 현재 CLI/Pipeline/Scheduler에 자동 연결하지 않았으며 GitHub Actions Workflow와 One-shot Runner도 아직 추가하지 않았습니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
+
+추가 설정은 `.env.example`의 `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`입니다. 의존성은 `python -m pip install -r requirements.txt`로 설치합니다. R2 SDK는 [Cloudflare의 boto3 설정](https://developers.cloudflare.com/r2/get-started/s3/)에 맞춰 S3 endpoint와 region `auto`를 사용합니다. Key/Secret/endpoint 또는 전체 SDK 오류를 로그로 출력하지 않습니다.
+
+API 사용 순서:
+
+1. `settings = Settings.load()` 후 `with R2DatabaseStore(settings) as store:` 문맥에서 `store.restore()`를 호출합니다. DB 연결을 열기 **전**, 로컬 DB가 없는 작업 디렉터리에서 수행합니다. 운영 객체는 `production/github_weekly_report.db`로 고정됩니다.
+2. `restore()`는 검증한 파일을 원자적으로 게시하고 `True`를 반환합니다. `NoSuchKey` + HTTP 404인 경우에만 `False`를 반환하며 로컬 DB를 생성하지 않습니다. 그 경우 기존 `Database(settings.database_path)`로 최초 schema를 초기화합니다. `NoSuchBucket`, 인증/권한, 네트워크, 불명확한 404, 손상 DB는 예외로 중단합니다.
+3. 기존 로컬 DB 또는 `-wal`/`-shm`/`-journal`이 있으면 restore를 거부합니다. 로컬 claim이나 미반영 WAL을 원격 파일로 덮어쓰지 않습니다. 자동 삭제/복구는 제공하지 않습니다.
+4. 실행 완료 후 transaction을 명시적으로 commit/rollback하고 **모든 application DB 연결을 종료한 뒤** `store.upload()`를 호출합니다. 필요하면 `database.sqlite_backup.checkpoint_and_close(db.connection)`으로 WAL checkpoint와 연결 종료를 함께 수행할 수 있습니다. pending transaction은 자동 commit하지 않고 거부하며, busy checkpoint도 업로드를 차단합니다.
+5. upload는 integrity/foreign-key/schema 검사를 하고 SQLite backup API로 WAL 없이 사용 가능한 단일 DB를 만듭니다. 기존 원격 운영 DB를 먼저 `backups/<UTC timestamp>-<UUID>.db`로 server-side copy한 뒤 새 DB를 업로드합니다. 백업 실패 시 운영 객체를 덮어쓰지 않습니다. 최초 운영 객체가 없는 경우에만 백업을 생략합니다. 반환값은 백업 key 또는 최초 업로드의 `None`입니다.
+
+`R2DatabaseStore` import는 `from services.r2_persistence import R2DatabaseStore`, 설정은 `from config.settings import Settings`입니다. 전송용 임시 파일·스트림·SQLite 연결·자체 생성 SDK client는 종료 시 정리됩니다. 주입한 Mock/client의 종료 책임은 호출자에게 있습니다.
+
+운영 객체 전송은 설정의 `DATABASE_PATH` 한 경로에만 묶입니다. test/integration/preview/fixture DB 파일명, DB 내부의 non-live run mode, fixture snapshot/metric 출처가 있으면 업로드를 거부합니다. 파일명을 production DB처럼 바꿔도 integration-test 이력이 있으면 차단하며 restore에도 동일한 내부 검사를 적용합니다. 운영 DB에 테스트 이력을 섞지 마세요.
+
+R2 전송 자체는 여러 작업 간 분산 잠금을 제공하지 않습니다. 추후 Workflow/Runner에서 download→run→upload 전체를 단일 동시 실행으로 제한해야 기존 SQLite claim이 원격 환경에서도 유지됩니다. 이번 단계의 테스트는 실제 R2 호출 없이 `python -m pytest -q tests/test_r2_persistence.py`로 실행합니다.
+
 ## 비용 없는 Dry Run
 
 모든 Repository·사건·수치·LLM 응답은 명시적인 합성 Fixture입니다. HTTP 요청은 `httpx.MockTransport` 안에서만 처리되며 실제 API 호출과 Telegram 발송은 없습니다. 운영 DB와 별도의 `출력폴더/dry-run.sqlite`를 사용합니다.

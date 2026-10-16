@@ -101,16 +101,20 @@ class Database:
         self.connection.commit()
         return run_id
 
-    def claim_live_run(self, start, end):
-        """Serialize claims so cron/manual overlap cannot duplicate a weekly delivery."""
+    def claim_run(self, start, end, mode):
+        """Atomically claim one period within a delivery mode."""
         self.connection.execute('BEGIN IMMEDIATE')
         try:
-            if self.rows('SELECT 1 FROM automation_runs WHERE julianday(period_end)=julianday(?) AND mode=?', (end,'live')):
-                raise DuplicateRunError('This weekly live run already exists; automatic resend is disabled')
-            return self.start_run(start,end,'live')
+            if self.rows('SELECT 1 FROM automation_runs WHERE julianday(period_end)=julianday(?) AND mode=?', (end,mode)):
+                raise DuplicateRunError(f'This weekly {mode} run already exists; automatic resend is disabled')
+            return self.start_run(start,end,mode)
         except Exception:
             self.connection.rollback()
             raise
+
+    def claim_live_run(self, start, end):
+        """Serialize claims so cron/manual overlap cannot duplicate a weekly delivery."""
+        return self.claim_run(start,end,'live')
 
     def finish_run(self, run_id, status, report=None, error=None):
         self.connection.execute('UPDATE automation_runs SET status=?,finished_at=?,report=?,error=? WHERE run_id=?',

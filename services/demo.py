@@ -111,6 +111,15 @@ class DemoBackend:
                 'vulnerabilities':[{'vulnerable_version_range':'<2.0.1','first_patched_version':'2.0.1'}]}])
         if path == '/graphql':
             payload = json.loads(request.content)
+            if 'createdAt' in payload['query'] and any(key.startswith('r0_') for key in payload['variables']):
+                result = {}
+                for alias, query in payload['variables'].items():
+                    current = self.period.start.date().isoformat() in query
+                    count = (7 if alias.endswith('_pr') else 12) if current else (2 if alias.endswith('_pr') else 3)
+                    occurred_at = self.event_time if current else (self.period.start-timedelta(days=1)).isoformat()
+                    result[alias] = {'nodes':[{'createdAt':occurred_at} for _ in range(count)],
+                                     'pageInfo':{'hasNextPage':False}}
+                return httpx.Response(200, json={'data': result})
             name = payload['variables']['owner']+'/'+payload['variables']['name']
             if 'totalCount' in payload['query']:
                 count = 10 if name == self.repositories[-1]['full_name'] else 20
@@ -143,23 +152,39 @@ class DemoBackend:
     def _openai(self, request):
         evidence = json.loads(request['input'])
         properties = request['text']['format']['schema']['properties']
-        if 'facts' in properties:
+        first_property = next(iter(properties.values()))
+        extraction = 'quote' in first_property.get('items', {}).get('properties', {})
+        if extraction:
             result = {key:[] for key in properties}
-            choices = {'facts':'readme','release_changes':'release','reason_for_trending':'release',
-                'developer_impact':'readme','positive_opinions':'comment','concerns':'comment','risks':'security'}
-            for key,kind in choices.items():
-                document = next((d for d in evidence['documents'] if d['kind']==kind),None)
+            choices = {'verified_facts':'Issue','reaction':'IssueComment',
+                'positive_opinions':'IssueComment','concerns':'IssueComment','risks':'Security'}
+            for key,source_type in choices.items():
+                document = next((d for d in evidence['documents']
+                                 if d.get('source_type')==source_type),None)
                 if document:
-                    result[key] = [{'source_id':document['id'],'quote':document['text'],'text':document['text']}]
+                    result[key] = [{'source_id':document['source_id'],'quote':document['text'],'text':document['text']}]
+            verified = next((d for d in evidence['documents'] if d.get('source_type')=='Issue'),None)
+            project = next(iter(evidence.get('deterministic_support',{}).get('project_summary',[])),None)
+            if verified and project:
+                verified_term = verified['text']
+                project_term = project['text']
+                result['developer_impact'] = [{
+                    'text':f'{project_term} 및 {verified_term} 근거는 개발 업무에 영향을 줄 수 있다.',
+                    'source_ids':[verified['source_id'],project['source_id']],
+                    'derivation_type':'multi_source_synthesis',
+                    'grounding_terms':[verified_term,project_term]}]
         else:
             result = {key:[] for key in NARRATIVE_KEYS}
-            choices = {'background':'facts','trigger':'release_changes','attention':'reason_for_trending',
-                'reaction':'positive_opinions','project':'facts','impact':'developer_impact',
-                'positive':'positive_opinions','concerns':'concerns','debates':'debates','risks':'risks'}
+            choices = {'background':'verified_facts','trigger':'reason_for_trending',
+                'attention':'attention_signals','reaction':'reaction','project':'project_summary',
+                'impact':'developer_impact','positive':'positive_opinions',
+                'concerns':'concerns','debates':'debates','risks':'risks'}
             for key,evidence_key in choices.items():
-                item = next((item for item in evidence[evidence_key] if item.get('source_id')),None)
+                item = next((item for item in evidence['structured_evidence'][evidence_key]
+                             if item.get('source_id') or item.get('source_ids')),None)
                 if item:
-                    result[key] = [{'text':item['text'],'source_ids':[item['source_id']]}]
+                    ids = item.get('source_ids') or [item['source_id']]
+                    result[key] = [{'text':item['text'],'source_ids':ids}]
         return httpx.Response(200,json={'status':'completed','output':[{'content':[
             {'type':'output_text','text':json.dumps(result,ensure_ascii=False)}]}]})
 

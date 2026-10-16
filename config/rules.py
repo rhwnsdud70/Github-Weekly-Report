@@ -32,6 +32,13 @@ PR_SIGNAL_COUNT = 10
 # Quantitative fallback for the qualitative community scale (spec 12.5).
 COMMUNITY_GROWTH_BUCKETS = ((200, 5), (100, 4), (50, 3), (25, 2), (0.000001, 1), (0, 0))
 CANDIDATE_LIMIT = 40
+# Candidate discovery deliberately leaves capacity for final TOP 5 deep analysis.
+# Search API has a much lower short-window limit than the core REST API.
+CANDIDATE_METRIC_LIMIT = 10
+API_BUDGETS = {'candidate': 70, 'validation': 25, 'deep_analysis': 80}
+RATE_LIMIT_RESERVE = 5
+DISCOVERY_TOPIC_QUOTA = 0.4
+ACTIVITY_FALLBACK_SEARCH_BUDGET = 6
 SNAPSHOT_BOUNDARY_TOLERANCE_SECONDS = 3600
 SHORTLIST_LIMIT = 10
 TOP_COUNT = 5
@@ -39,9 +46,14 @@ SECURITY_PRIORITY_WEIGHTS = {'actively_exploited': 12, 'easy_to_exploit': 5,
     'widespread_impact': 5, 'ecosystem_impact': 5, 'urgent': 5, 'unpatched': 3}
 SECURITY_PROJECT_SCALE = ((50000,3),(10000,2),(2000,1))
 WATCHLIST_LIMIT = 3
-DEEP_LIMITS = {'issues': 3, 'discussions': 2, 'pulls': 2, 'releases': 2}
-DEEP_DOCUMENT_CHAR_LIMIT = 6000
-DEEP_TOTAL_CHAR_LIMIT = 50000
+DEEP_LIMITS = {'issues': 3, 'discussions': 2, 'pulls': 2, 'releases': 4}
+DEEP_COMMENT_PER_PARENT = 2
+DEEP_NOTABLE_LIMIT = 8
+DEEP_DOCUMENT_CHAR_LIMIT = 2800
+DEEP_RELEASE_CHAR_LIMIT = 1600
+DEEP_COMMUNITY_CHAR_LIMIT = 1200
+DEEP_COMMENT_CHAR_LIMIT = 650
+DEEP_TOTAL_CHAR_LIMIT = 16000
 TELEGRAM_LIMIT = 4096
 TELEGRAM_ATTEMPTS = 3
 TELEGRAM_DELAY = 1

@@ -29,7 +29,8 @@ def split_message(message, limit=TELEGRAM_LIMIT):
             raise OversizedSection('Single paragraph exceeds Telegram limit; regenerate shorter content')
         current.append(block)
     for index, section in enumerate(message.sections):
-        preferred_break = message.kind == 'top' and index == 4
+        preferred_break = message.kind == 'top' and section.startswith(
+            ('👨‍💻 개발자에게', '💬 개발자들은', '🚨 주의할 점'))
         if units(section) <= capacity:
             add(section, preferred_break)
             continue

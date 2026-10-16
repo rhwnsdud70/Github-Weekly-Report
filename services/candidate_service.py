@@ -15,15 +15,20 @@ class CandidateCollector:
     def __init__(self, github, web_client, trending=collect_trending):
         self.github, self.web_client, self.trending = github, web_client, trending
         self.errors = []
+        self.diagnostics = {'discovered': 0, 'deduplicated': 0, 'duplicates': 0}
 
     def collect(self, period, limit=rules.CANDIDATE_LIMIT, include_trending=True, watchlist_names=()):
         candidates = {}
+        self.diagnostics = {'discovered': 0, 'deduplicated': 0, 'duplicates': 0}
         def add(name, source, rank=None, event=None, raw=None):
             try:
                 repo = repository_model(raw or self.github.repository(name))
             except GitHubError as error:
                 self.errors.append(f'repository {name}: {error}')
                 return
+            self.diagnostics['discovered'] += 1
+            if repo.identity in candidates:
+                self.diagnostics['duplicates'] += 1
             candidate = candidates.setdefault(repo.identity, Candidate(repo))
             candidate.collection_sources.add(source)
             if rank is not None:
@@ -42,7 +47,8 @@ class CandidateCollector:
         for name in watchlist_names:
             add(name,'watchlist')
         date = (period.end - timedelta(days=14)).date().isoformat()
-        for topic in rules.SEARCH_TOPICS:
+        topic_count = min(len(rules.SEARCH_TOPICS), max(1, round(limit * rules.DISCOVERY_TOPIC_QUOTA)))
+        for topic in rules.SEARCH_TOPICS[:topic_count]:
             try:
                 result = self.github.search('repositories', f'topic:{topic} stars:>=100 pushed:>={date} fork:false',
                                             max(2, round(limit * .4 / len(rules.SEARCH_TOPICS))))
@@ -78,4 +84,6 @@ class CandidateCollector:
         ordinary = [c for c in result if not c.critical]
         for error in self.errors:
             logger.warning('%s', error)
-        return critical + ordinary[:max(0, limit - len(critical))]
+        selected = critical + ordinary[:max(0, limit - len(critical))]
+        self.diagnostics['deduplicated'] = len(selected)
+        return selected

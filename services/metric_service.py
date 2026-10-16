@@ -17,33 +17,84 @@ def query_window(period):
     return f'created:{period.start.isoformat()}..{(period.end-timedelta(seconds=1)).isoformat()}'
 
 
-def collect_metrics(candidate, github, period):
+def _previous_activity(candidate, counts=None, error=None):
+    # Previous week is persisted with the snapshot. Never spend two Search API
+    # requests per repository to rediscover data that this service already owns.
+    snapshot = (candidate.previous.get('snapshot') or {}) if candidate.previous.get('snapshot_usable', True) else {}
+    for kind in ('issues', 'pulls'):
+        label = 'previous_' + kind
+        value = counts.get(kind) if counts else None
+        candidate.metrics[label] = (Metric.known(value, 'GitHub GraphQL exact previous-period count')
+                                    if value is not None else Metric(None, 'unavailable',
+                                        str(error or 'GraphQL previous-period result incomplete')))
+
+
+def _finish_metrics(candidate, github, period, counts=None, previous_counts=None, error=None, previous_error=None):
     name = candidate.repository.full_name
-    previous_period = ReportPeriod(period.start-timedelta(days=7), period.start)
-    for kind, qualifier in [('issues', 'issue'), ('pulls', 'pr')]:
-        for label, window in [(kind, period), ('previous_' + kind, previous_period)]:
-            try:
-                result = github.search('issues', f'repo:{name} is:{qualifier} {query_window(window)}', 1)
-                candidate.metrics[label] = Metric.known(result['total_count'], 'GitHub search: ' + query_window(window))
-            except GitHubError as error:
-                candidate.metrics[label] = Metric(None, 'unavailable', str(error))
-                candidate.errors.append(f'{label}: {error}')
+    _previous_activity(candidate, previous_counts, previous_error)
+    for kind in ('issues', 'pulls'):
+        if counts is not None and counts.get(kind) is not None:
+            candidate.metrics[kind] = Metric.known(counts[kind], 'GitHub GraphQL exact createdAt count')
+        else:
+            reason = error or 'GraphQL current-period result incomplete'
+            candidate.metrics[kind] = Metric(None, 'unavailable', str(reason))
+            candidate.errors.append(f'{kind}: {reason}')
     try:
-        events = [release_event(item) for item in github.releases(name)]
+        fetch = getattr(github, 'releases_for_period', None)
+        releases = fetch(name, period.start, period.end) if fetch else github.releases(name)
+        events = [release_event(item) for item in releases]
         for event in events:
             if event and period.contains(event.occurred_at) and event.identity not in {e.identity for e in candidate.events}:
                 candidate.events.append(event)
                 candidate.collection_sources.add('release')
         candidate.metrics['releases_checked'] = Metric.known(True, 'GitHub releases')
-    except GitHubError as error:
-        candidate.metrics['releases_checked'] = Metric(None, 'unavailable', str(error))
-        candidate.errors.append(f'releases: {error}')
-    try:
-        candidate.metrics['discussion_total'] = Metric.known(github.discussion_count(name), 'GitHub GraphQL totalCount')
-    except GitHubError as error:
-        candidate.metrics['discussion_total'] = Metric(None, 'unavailable', str(error))
-        candidate.errors.append(f'discussions: {error}')
+    except GitHubError as release_error:
+        candidate.metrics['releases_checked'] = Metric(None, 'unavailable', str(release_error))
+        candidate.errors.append(f'releases: {release_error}')
+    # Discussion bodies/counts are deep-analysis data. Candidate ranking records
+    # this component as unknown rather than consuming one GraphQL request each.
+    candidate.metrics['discussion_total'] = Metric(source='deferred until final TOP 5')
     calculate_metrics(candidate, period)
+
+
+def collect_metrics_batch(candidates, github, period):
+    """Populate minimal candidate metrics with one GraphQL activity request."""
+    names = [candidate.repository.full_name for candidate in candidates]
+    activity_error = previous_error = None
+    try:
+        activity = github.activity_counts(names, period.start, period.end)
+    except GitHubError as error:
+        activity = {}
+        activity_error = error
+    previous_period = ReportPeriod(period.start-timedelta(days=7), period.start)
+    try:
+        previous_activity = github.activity_counts(names, previous_period.start, previous_period.end)
+    except GitHubError as error:
+        previous_activity = {}
+        previous_error = error
+    fallbacks = 0
+    for candidate in candidates:
+        current = activity.get(candidate.repository.full_name)
+        if not current:
+            continue
+        for kind in ('issues', 'pulls'):
+            if current.get(kind) is not None or fallbacks >= rules.ACTIVITY_FALLBACK_SEARCH_BUDGET:
+                continue
+            try:
+                current[kind] = github.activity_count_fallback(candidate.repository.full_name, kind,
+                                                               period.start, period.end)
+                fallbacks += 1
+            except GitHubError:
+                fallbacks += 1
+    for candidate in candidates:
+        name = candidate.repository.full_name
+        _finish_metrics(candidate, github, period, activity.get(name), previous_activity.get(name),
+                        activity_error, previous_error)
+
+
+def collect_metrics(candidate, github, period):
+    """Compatibility entry point for one candidate; production uses the batch form."""
+    collect_metrics_batch([candidate], github, period)
 
 
 def calculate_metrics(candidate, period):
