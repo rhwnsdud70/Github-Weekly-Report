@@ -72,8 +72,11 @@ def test_secrets_exactly_match_settings_and_only_exist_on_relevant_steps(tmp_pat
         'R2_SECRET_ACCESS_KEY':'R2_SECRET_ACCESS_KEY','R2_BUCKET':'R2_BUCKET',
     }
     steps = steps_by_id()
+    deployment = {'DATABASE_PATH':'data/github_weekly_report.db',
+                  'TIMEZONE':'Asia/Seoul','OPENAI_MODEL':'gpt-4.1-mini'}
     for name in ('configuration','production'):
-        assert steps[name]['env'] == {key:'${{ secrets.'+secret+' }}' for key,secret in expected.items()}
+        assert steps[name]['env'] == {
+            **deployment,**{key:'${{ secrets.'+secret+' }}' for key,secret in expected.items()}}
     assert '${{ secrets.' not in str(workflow().get('env',{}))
     assert '${{ secrets.' not in str(workflow()['jobs']['weekly-report']['env'])
     assert '${{ secrets.' not in str(steps['dependencies'])
@@ -81,12 +84,25 @@ def test_secrets_exactly_match_settings_and_only_exist_on_relevant_steps(tmp_pat
     injected = {key:'dummy-'+secret for key,secret in expected.items()}
     injected['R2_ENDPOINT'] = 'https://example.r2.cloudflarestorage.com'
     injected.update(workflow()['jobs']['weekly-report']['env'])
+    injected.update(deployment)
     configured = Settings.load(tmp_path/'absent.env',environ=injected)
     configured.validate_live(send=True)
     configured.validate_r2()
     assert configured.github_token == 'dummy-GH_API_TOKEN'
     assert configured.database_path == 'data/github_weekly_report.db'
     assert configured.timezone == 'Asia/Seoul'
+
+
+def test_deployment_environment_does_not_leak_into_offline_tests():
+    parsed = workflow()
+    job = parsed['jobs']['weekly-report']
+    steps = steps_by_id()
+    for variable in ('DATABASE_PATH','TIMEZONE','OPENAI_MODEL'):
+        assert variable not in parsed.get('env',{})
+        assert variable not in job.get('env',{})
+        assert variable not in steps['tests'].get('env',{})
+        assert variable in steps['configuration']['env']
+        assert variable in steps['production']['env']
 
 
 def test_production_step_is_explicitly_gated_and_exit_failure_is_not_masked():

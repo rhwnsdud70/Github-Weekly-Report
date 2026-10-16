@@ -35,9 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      DATABASE_PATH: data/github_weekly_report.db
-      TIMEZONE: Asia/Seoul
-      OPENAI_MODEL: gpt-4.1-mini
       PYTHONUNBUFFERED: "1"
       PYTHONUTF8: "1"
     steps:
@@ -62,6 +59,9 @@ jobs:
       - name: Validate deployment configuration without API calls
         id: configuration
         env:
+          DATABASE_PATH: data/github_weekly_report.db
+          TIMEZONE: Asia/Seoul
+          OPENAI_MODEL: gpt-4.1-mini
           GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -83,6 +83,9 @@ jobs:
         id: production
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'production') }}
         env:
+          DATABASE_PATH: data/github_weekly_report.db
+          TIMEZONE: Asia/Seoul
+          OPENAI_MODEL: gpt-4.1-mini
           GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

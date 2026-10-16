@@ -164,6 +164,8 @@ Secret은 설치/pytest step에 전달하지 않고, offline 설정 검사와 pr
 
 DB 경로는 `data/github_weekly_report.db`, TIMEZONE은 `Asia/Seoul`로 고정 주입합니다. 기존 실행 스크립트가 project root를 import 경로에 추가하므로 별도 PYTHONPATH 변경은 없습니다. concurrency group은 `github-weekly-report-production`, `cancel-in-progress: false`, `queue: max`이며 validate와 production 모두 같은 Workflow 경계 안에서 직렬화합니다. 대기열 보존은 [GitHub concurrency 공식 문서](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)를 기준으로 적용했습니다.
 
+`DATABASE_PATH`, `TIMEZONE`, `OPENAI_MODEL`은 설정 검사와 production 실행 step에만 주입합니다. Offline pytest에는 운영 설정을 상속시키지 않습니다. Settings의 기존 우선순위는 **OS 환경변수 > `--env`로 지정한 파일 > 기본값**이며 `--env`가 OS 값을 강제로 덮어쓰는 옵션은 아닙니다. 파일 설정 자체를 검사하는 CLI 테스트는 외부 DATABASE_PATH를 monkeypatch로 격리하고, 환경변수 우선순위는 별도 테스트로 검증합니다.
+
 Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram retry 및 R2 업로드를 포함한 전체 실행을 제한합니다. timeout/취소 시 자동 복구 발송이나 finally 업로드를 하지 않습니다. 마지막 Job Summary에는 dependencies/config/tests/production의 고정 step outcome만 기록하고, 파일 본문이나 Secret은 포함하지 않습니다. 원본 logs/artifacts, `.env`, SQLite DB/WAL/SHM은 Actions Artifact로 **업로드하지 않습니다**. package cache는 pip 캐시만 사용합니다. 운영 DB 영구 저장은 R2만 담당합니다. 업로드 실패/강제 종료 뒤 hosted runner의 로컬 DB·로그는 보존되지 않으므로 원격 claim/발송 여부를 확인하기 전 재실행하지 마세요.
 
 운영 활성화 전 순서:

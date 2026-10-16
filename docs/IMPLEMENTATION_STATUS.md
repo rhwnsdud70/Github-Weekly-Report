@@ -1,14 +1,14 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: GitHub Actions Offline Configuration의 안전한 상세 진단 및 회귀 검증
+- 마지막으로 완료된 Phase: GitHub Actions pytest의 운영 환경변수 상속 문제 수정 및 양 환경 회귀 검증
 - 현재 진행 중인 Phase: 수정본 Push 후 Workflow validate 재실행 대기, 예약 자동 실행 비활성
 - 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow
 - 아직 구현하지 않은 기능: 이번 Workflow 요청 범위의 미완성 코드/TODO 없음. GitHub-hosted 실행/실제 R2 연결 검증과 예약 활성화는 미수행.
-- 현재 실패 중인 테스트: 로컬 pytest 실패 없음. 사용자가 실행한 GitHub validate는 설정 검사에서 실패했으며 상세 진단 적용 후 재확인 대기.
+- 현재 실패 중인 테스트: 로컬 pytest 실패 없음. 사용자 GitHub 실행의 설정 검사는 성공했고 Offline pytest 단일 실패는 수정 완료, GitHub 재실행 대기.
 - 알려진 문제: Codex 환경은 외부 API/패키지 다운로드가 차단되며 boto3/botocore 미설치. R2/Runner는 Mock 검증만 완료. R2는 분산 잠금이 아니므로 전체 restore→run→upload의 외부 직렬화가 필요하며, 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험을 수동 점검해야 함.
-- 다음 작업: 수정본 Push 후 Actions의 GitHub Weekly Report → Run workflow → 업데이트된 브랜치 → mode=validate로 새 실행. MISSING_ENV/INVALID_FORMAT/LOCAL_*_EXISTS 진단에 따라 값은 공유하지 않고 해당 설정만 점검. validate 성공 전 Production 실행/예약 활성화 금지, Artifact 업로드는 비활성 유지.
+- 다음 작업: 수정본 Push 후 Actions의 GitHub Weekly Report → Run workflow → 업데이트된 브랜치 → mode=validate로 새 실행. Configuration와 Offline regression tests 성공 및 Production runner SKIPPED를 확인. Production 실행/예약 활성화는 별도 단계이며 Artifact 업로드는 비활성 유지.
 - 실행 방법: GitHub Actions → GitHub Weekly Report → Run workflow → validate(기본). production을 명시적으로 선택할 때만 기존 `python scripts/run_weekly_live_once.py`가 실제 API를 사용함. Workflow는 bootstrap을 허용하지 않으며 Codex에서는 실행하지 않음.
-- 테스트 방법: `& 'C:/Users/고준영/.pyenv/pyenv-win/versions/3.11.9/python.exe' -m pytest -q` (현재 **336 passed in 4.54s**)
+- 테스트 방법: `& 'C:/Users/고준영/.pyenv/pyenv-win/versions/3.11.9/python.exe' -m pytest -q` (DATABASE_PATH 없음 **340 passed in 4.84s**, 주입 시 **340 passed in 4.81s**)
 
 ## Phase 검증 기록
 
@@ -199,3 +199,8 @@
 - validate는 계속 운영 필수 Secret 전체를 요구하고 Settings.validate_live(send=True), Settings.validate_r2의 기존 정책과 production path/timezone/local state 제약을 유지한다. 실패 시 SDK import/외부 호출 이전에 중단하며 정상 validate도 API client 생성/DB opening/production pipeline 실행을 하지 않는다. README에 진단별 점검 방법, Secret 매핑, 추적 파일 점검 및 새 validate 실행 절차를 추가했다.
 - 테스트: 필수 변수 8개 각각 누락 이름 확인, 여러 누락 동시 출력, endpoint의 path/query/credentials/HTTP/bare host/malformed IPv6 오류 비노출, DATABASE_PATH/TIMEZONE 분리, DB/WAL/SHM/journal 종류별 차단과 파일 원본 보존, 예상 밖 Settings/로드 오류의 category 확인을 추가했다. 기존 정상 validate/무API/무DB/Secret 비노출 및 Production/Scheduler 회귀 테스트를 포함해 관련 **74 passed in 1.60s**, 전체 **336 passed in 4.54s**. 로컬 실패 테스트 없음. Python compile 및 git diff --check 통과.
 - 다음 작업: 변경 파일을 GitHub에 Push한 후 업데이트된 브랜치의 workflow_dispatch mode=validate를 새로 실행해 정확한 category/변수명을 확인한다. 실제 GitHub validate 성공은 아직 확인하지 않았다. 이번 작업에서 Push/Workflow 실행/Production/Scheduler 활성화 및 GitHub/R2/OpenAI/Telegram API 호출은 하지 않았다.
+- Ubuntu Offline pytest 단일 실패 수정: 사용자는 deployment configuration 성공 후 `tests/test_cli.py::test_cli_dry_structure_and_init_without_credentials`에서 335 passed/1 failed를 확인했다. 코드상 Workflow job.env의 DATABASE_PATH가 pytest까지 상속되고, Settings.load의 `{**dotenv_values(env_file), **os.environ}` 병합 때문에 config.env의 production.db가 data/github_weekly_report.db로 덮어써진 것이 실제 원인이다. 수정 전 Windows에서도 DATABASE_PATH를 주입하고 해당 단일 테스트만 실행해 같은 실패/출력을 재현했으므로 OS 차이나 선행 테스트 간 오염으로 판단하지 않는다.
+- Workflow의 DATABASE_PATH/TIMEZONE/OPENAI_MODEL을 job.env에서 제거하고 configuration 및 production step.env로 이동했다. Production Runner의 기존 값과 모든 Secret 매핑은 유지한다. Offline tests/설치 step에는 운영 설정을 전달하지 않으며 이를 YAML 구조 테스트로 고정했다. Python Scheduler/보고 기간, R2/One-shot 핵심 로직/scoring/ranking/Telegram/duplicate protection은 수정하지 않았다.
+- tests/test_cli.py의 config.env 전용 테스트는 외부 DATABASE_PATH를 명시적으로 제거하며, 주입 유무 두 조건에서 원래 DB 생성/불변 assertion을 그대로 검사한다. 별도 CLI 테스트는 실제 OS 환경변수를 주입해 환경변수가 파일보다 우선하고 환경변수가 없으면 `--env` 파일이 적용됨을 검증한다. monkeypatch가 각 테스트 후 환경을 복구한다. config/settings.py의 우선순위 정책은 변경하지 않았다.
+- 변경 파일: .github/workflows/weekly-report.yml, tests/test_cli.py, tests/test_weekly_workflow.py, README.md, 본 상태 문서. 관련 CLI/Workflow/Settings 테스트 **48 passed in 0.89s**, 해당 단일 테스트의 두 환경 case **2 passed in 0.29s**. 전체 pytest는 DATABASE_PATH 없는 독립 프로세스에서 **340 passed in 4.84s**, Workflow와 같은 DATABASE_PATH를 주입한 독립 프로세스에서 **340 passed in 4.81s**. 실패 테스트 없음. Python compile 및 git diff --check 통과.
+- 다음 작업: 수정 파일을 Push한 뒤 Actions → GitHub Weekly Report → Run workflow → 수정된 브랜치 → validate를 새로 실행한다. configuration와 offline tests가 성공하고 production이 skipped인지 확인한다. 실제 GitHub/R2/OpenAI/Telegram API 호출, Production 실행, Push/Workflow dispatch와 Scheduler 활성화는 이번 작업에서 수행하지 않았다.
