@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import pytest
 from services.scheduler import KST, report_period, next_run, scheduler_loop
 
 
@@ -22,3 +23,14 @@ def test_scheduler_clock_injection():
                    stop=lambda:bool(jobs))
     assert len(jobs) == 1
     assert jobs[0].end.hour == 19
+
+
+@pytest.mark.parametrize('delay_minutes',[0,5,12,60,61,24*60])
+def test_actions_delay_keeps_completed_sunday_period(delay_minutes):
+    boundary = datetime(2026,10,18,19,tzinfo=KST)
+    period = report_period(boundary+timedelta(minutes=delay_minutes))
+    assert period.end == boundary
+    assert period.start == datetime(2026,10,11,19,tzinfo=KST)
+    assert period.end-period.start == timedelta(hours=168)
+    assert period.contains(period.start)
+    assert not period.contains(period.end)

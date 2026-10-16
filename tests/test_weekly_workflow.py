@@ -1,7 +1,7 @@
 from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
-import re
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -23,7 +23,7 @@ def steps_by_id():
 
 def test_workflow_valid_yaml_and_default_dispatch_is_validate_only():
     parsed = workflow()
-    assert set(parsed['on']) == {'workflow_dispatch'}  # Schedule deliberately inactive at this stage.
+    assert set(parsed['on']) == {'workflow_dispatch','schedule'}
     selection = parsed['on']['workflow_dispatch']['inputs']['mode']
     assert selection == {
         'description':'validate checks configuration offline; production sends a real report',
@@ -31,12 +31,27 @@ def test_workflow_valid_yaml_and_default_dispatch_is_validate_only():
     assert 'push' not in parsed['on'] and 'pull_request' not in parsed['on']
 
 
-def test_disabled_schedule_has_exact_kst_sunday_1900_rule():
+def test_enabled_schedule_has_exact_kst_sunday_1900_rule_without_duplicates():
     lines = WORKFLOW_PATH.read_text(encoding='utf-8').splitlines()
-    index = next(index for index,line in enumerate(lines) if line.strip() == '# schedule:')
-    block = '\n'.join(re.sub(r'^  # ?', '',line) for line in lines[index:index+3])
-    assert yaml.safe_load(block) == {
-        'schedule':[{'cron':'0 19 * * 0','timezone':'Asia/Seoul'}]}
+    assert lines.count('  schedule:') == 1
+    assert workflow()['on']['schedule'] == [{'cron':'0 19 * * 0','timezone':'Asia/Seoul'}]
+
+
+@pytest.mark.parametrize('event,mode,production,offline_tests',[
+    ('workflow_dispatch','validate',False,True),
+    ('workflow_dispatch','production',True,False),
+    ('schedule','',True,False),  # Schedule has no dispatch input.
+    ('schedule','validate',True,False),  # Never use a dispatch default for schedule.
+    ('push','production',False,False),
+])
+def test_event_conditions_route_schedule_and_manual_modes(event,mode,production,offline_tests):
+    steps = steps_by_id()
+    context = {'github':SimpleNamespace(event_name=event),'inputs':SimpleNamespace(mode=mode)}
+    for step,expected in [('production',production),('tests',offline_tests)]:
+        # Evaluate only this workflow's boolean subset; no action or command runs.
+        expression = steps[step]['if'].removeprefix('${{').removesuffix('}}').strip()
+        expression = expression.replace('&&',' and ').replace('||',' or ')
+        assert eval(expression,{'__builtins__':{}},context) is expected
 
 
 def test_workflow_serializes_entire_run_without_canceling_pending_runs():

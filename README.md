@@ -86,7 +86,7 @@ python scripts\run_full_top5_live.py --integration-test
 
 ## Cloudflare R2 SQLite 저장·복원
 
-R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 아래 Production One-shot Runner 및 GitHub Actions 수동 Workflow에서 사용하며 기존 CLI/Pipeline/Scheduler의 동작은 유지합니다. 예약 실행은 아직 비활성 상태입니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
+R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 아래 Production One-shot Runner 및 GitHub Actions 수동/예약 Workflow에서 사용하며 기존 CLI/Pipeline/Scheduler의 동작은 유지합니다. Workflow의 정규 예약은 매주 일요일 19:00 Asia/Seoul로 활성화되어 있으며 기본 브랜치 반영 후 적용됩니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
 
 추가 설정은 `.env.example`의 `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`입니다. 의존성은 `python -m pip install -r requirements.txt`로 설치합니다. R2 SDK는 [Cloudflare의 boto3 설정](https://developers.cloudflare.com/r2/get-started/s3/)에 맞춰 S3 endpoint와 region `auto`를 사용합니다. Key/Secret/endpoint 또는 전체 SDK 오류를 로그로 출력하지 않습니다.
 
@@ -122,7 +122,7 @@ WAL checkpoint 후 연결을 닫고 SQLite backup API로 단일 파일을 export
 
 업로드 후 객체를 다시 읽어 존재 여부·ContentLength·실제 byte 수·SHA-256을 로컬 백업과 비교한 경우에만 `Initial R2 migration: SUCCESS` 및 종료 코드 0을 출력합니다. 실패는 종료 코드 1이며 강제 덮어쓰기/삭제 옵션은 없습니다. timeout 또는 검증 실패 때는 이미 원격에 생성됐을 가능성이 있으므로 원본과 백업을 보존하고 원격 상태를 확인하세요. 재실행해도 존재하는 객체를 교체하지 않습니다.
 
-이 명령은 R2만 호출하며 GitHub 수집/LLM/Telegram/Pipeline/운영 claim 갱신/스케줄 등록을 하지 않습니다. Codex에서는 Mock 검증만 수행했습니다. 관련 테스트: `python -m pytest -q tests/test_r2_bootstrap.py tests/test_r2_persistence.py`. 실제 이전 성공을 확인한 다음 별도 단계에서 Actions production 수동 실행을 진행하며, 정규 schedule은 계속 비활성입니다.
+이 명령은 R2만 호출하며 GitHub 수집/LLM/Telegram/Pipeline/운영 claim 갱신/스케줄 등록을 하지 않습니다. Codex에서는 Mock 검증만 수행했습니다. 관련 테스트: `python -m pytest -q tests/test_r2_bootstrap.py tests/test_r2_persistence.py`. 기존 운영 DB의 최초 이전과 Actions production 연결 검증은 사용자 확인으로 완료되었으므로 정상 운영 중 bootstrap을 다시 실행하지 않습니다. 정규 예약은 아래 Workflow에서 관리합니다.
 
 ## R2 Production One-shot Runner
 
@@ -166,10 +166,11 @@ Production `InsufficientCandidates` 발생 시 콘솔에서 Candidate funnel / E
 
 ## GitHub Actions 수동 검증 및 운영 활성화
 
-`.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. Workflow 파일을 기본 브랜치에 반영한 뒤 GitHub의 **Actions → GitHub Weekly Report → Run workflow**에서 mode를 선택합니다. 현재는 `workflow_dispatch`만 활성화되어 자동 발송되지 않습니다.
+`.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. **정규 예약은 매주 일요일 19:00 Asia/Seoul로 활성화**되어 있습니다. Workflow 파일을 기본 브랜치에 반영해야 GitHub 예약에 적용됩니다. 수동 실행은 **Actions → GitHub Weekly Report → Run workflow**에서 기존 mode를 선택합니다.
 
 - `validate`(기본값): Secret 존재 여부/설정 형식, production 경로, 프로젝트 파일, SDK import를 검사하고 compile/전체 pytest를 수행합니다. DB를 열거나 R2 client를 만들지 않고 수집/OpenAI/Telegram/R2 애플리케이션 API를 호출하지 않습니다. GitHub-hosted 환경 준비·의존성 설치에는 네트워크가 필요합니다. 인증 성공/원격 DB 존재 여부는 이 모드로 검증하지 않습니다.
 - `production`: 위 offline 설정 검사를 통과한 뒤 `python scripts/run_weekly_live_once.py`를 실행합니다. 실제 GitHub/OpenAI/Telegram/R2 API를 사용하며 발송할 수 있습니다. 자동 bootstrap은 없고, Runner의 nonzero 종료 코드는 Workflow 실패로 유지됩니다. 기존 claim이면 Runner가 API client 생성 전에 차단하고 안전하게 종료합니다.
+- `schedule` 이벤트: dispatch 입력값 없이 위 production 경로를 실행합니다. 수동 validate 전용 pytest step은 건너뛰며 설정 검사는 먼저 실행합니다. Python Scheduler 대기 루프를 실행하지 않습니다.
 
 Secret은 설치/pytest step에 전달하지 않고, offline 설정 검사와 production 실행 step에만 다음처럼 연결합니다. 값은 출력하지 않습니다.
 
@@ -190,12 +191,12 @@ DB 경로는 `data/github_weekly_report.db`, TIMEZONE은 `Asia/Seoul`로 고정 
 
 Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram retry 및 R2 업로드를 포함한 전체 실행을 제한합니다. timeout/취소 시 자동 복구 발송이나 finally 업로드를 하지 않습니다. 마지막 Job Summary에는 dependencies/config/tests/production의 고정 step outcome만 기록하고, 파일 본문이나 Secret은 포함하지 않습니다. 원본 logs/artifacts, `.env`, SQLite DB/WAL/SHM은 Actions Artifact로 **업로드하지 않습니다**. package cache는 pip 캐시만 사용합니다. 운영 DB 영구 저장은 R2만 담당합니다. 업로드 실패/강제 종료 뒤 hosted runner의 로컬 DB·로그는 보존되지 않으므로 원격 claim/발송 여부를 확인하기 전 재실행하지 마세요.
 
-운영 활성화 전 순서:
+기본 브랜치 반영 후 확인 절차:
 
-1. 기본 mode `validate`로 수동 실행해 설치·설정·테스트 결과와 Job Summary를 확인합니다.
-2. R2 production 객체가 존재하고 올바른 운영 DB인지 별도 확인합니다. 없는 경우에만 승인된 최초 bootstrap 절차를 별도로 수행합니다. 이 Workflow에는 bootstrap 입력이나 자동 초기화 옵션이 없습니다.
-3. 실제 발송을 의도할 때 mode `production`으로 수동 1회 실행하고 Runner의 terminal 상태, R2 upload 성공, Telegram 수신 및 claim 보존을 확인합니다.
-4. 성공 후 활성화 커밋에서 Workflow의 아래 세 줄 주석을 해제합니다. 수동 전용 상태를 검증하는 테스트와 IMPLEMENTATION_STATUS의 단계도 그때 갱신합니다. 기존 Python Scheduler는 동시에 실행하지 않습니다.
+1. 예약 활성화 변경을 기본 브랜치에 Push/merge하고 Workflow가 enabled 상태인지 확인합니다. 최신 validate 통과 및 R2 최초 이전/운영 연결 검증은 선행 완료 조건입니다.
+2. 필요하면 기본 mode `validate`로 수동 재검증합니다. 이 선택은 production을 실행하지 않으며 정규 예약은 계속 활성 상태입니다.
+3. 다음 일요일 Actions run의 이벤트가 `schedule`이고 `Run production once`가 실행됐는지 확인합니다. 다른 서버의 Python Scheduler/cron을 동시에 실행하지 않습니다.
+4. 콘솔의 보고 기간, Claim, Pipeline 결과, SQLite finalize, R2 upload 및 최종 종료 상태를 확인합니다. 성공한 보고서는 Telegram 수신도 확인합니다. 이미 Claim된 주차를 강제로 재실행하지 않습니다.
 
 ```yaml
   schedule:
@@ -203,9 +204,11 @@ Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram ret
       timezone: "Asia/Seoul"
 ```
 
-예약은 일요일 19:00 KST이며 [GitHub schedule timezone 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)의 구문을 사용합니다. 현재 파일에서는 주석이라 비활성입니다. 활성화 후 schedule 이벤트는 production 경로를 선택하고, 예약이 지연돼도 기존 Runner가 가장 최근 완료된 일요일 경계를 사용합니다. 다른 서버/Workflow가 동일 R2 객체를 쓰면 같은 저장소의 concurrency만으로는 보호되지 않으므로 운영 writer를 단일화합니다.
+예약은 일요일 19:00 KST이며 [GitHub schedule timezone 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)의 구문을 사용합니다. schedule 이벤트는 production 경로를 선택하고, 예약이 몇 분 지연돼도 기존 Runner가 가장 최근 완료된 일요일 19:00 경계를 사용합니다. 기간은 `이전 일요일 19:00 <= event < 이번 일요일 19:00`의 168시간입니다. 다른 서버/Workflow가 동일 R2 객체를 쓰면 같은 저장소의 concurrency만으로는 보호되지 않으므로 운영 writer를 단일화합니다.
 
-구조/안전 경계 테스트는 `python -m pytest -q tests/test_weekly_workflow.py`로 실행합니다. 이 저장소 작업에서는 Workflow dispatch/production 실행/예약 활성화를 수행하지 않았습니다.
+`InsufficientCandidates`이면 Candidate funnel / Exclusion reasons / Data gaps를 확인합니다. Cold Start 또는 경계 후 1시간 초과 지연으로 Trending/Star 비교 근거가 부족할 수 있으며, 기준을 완화해 보고서를 채우지 않습니다. FAILED terminal claim 및 R2 upload 성공 여부를 확인하고 해당 주차 claim은 유지합니다. 예외/취소/timeout/업로드 실패 시 원격 claim과 Telegram 발송 여부를 먼저 확인하고 자동 재발송하거나 claim을 삭제하지 않습니다. 진단 집계는 신규 실패 run의 기존 DB JSON에도 보존됩니다.
+
+구조/안전 경계 테스트는 `python -m pytest -q tests/test_weekly_workflow.py tests/test_scheduler.py`로 실행합니다. 이번 변경은 예약 정의를 활성화했으며 Codex에서 Workflow dispatch나 실제 API/production 실행은 하지 않았습니다.
 
 Offline configuration step이 실패하면 콘솔의 아래 코드를 확인합니다. 변수명/고정 category만 출력하며 Secret 값, 일부 문자, 길이, 접두사, 예외 원문은 출력하지 않습니다. 여러 설정 오류는 함께 표시합니다.
 

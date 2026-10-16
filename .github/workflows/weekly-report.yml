@@ -11,11 +11,9 @@ name: GitHub Weekly Report
         options:
           - validate
           - production
-  # Automatic production is DISABLED until manual validation and production verification.
-  # To enable, uncomment all three lines below in a reviewed activation change.
-  # schedule:
-  #   - cron: "0 19 * * 0"
-  #     timezone: "Asia/Seoul"
+  schedule:
+    - cron: "0 19 * * 0"
+      timezone: "Asia/Seoul"
 
 permissions:
   contents: read

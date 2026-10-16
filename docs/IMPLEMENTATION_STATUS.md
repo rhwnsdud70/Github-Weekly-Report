@@ -1,16 +1,18 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: Production InsufficientCandidates 코드 점검 및 운영 console/실패 run 집계 진단 보존
-- 현재 진행 중인 Phase: 수정본 Actions validate 및 정규 운영 활성화 판단 대기; 이번 작업에서 schedule/production 실행 없음
-- 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow, R2 최초 이전 전용 bootstrap
-- 아직 구현하지 않은 기능: 이번 진단 개선 범위의 미완성 코드/TODO 없음. 사용자 확인 실제 R2 이전 및 Actions production 연결 성공; 정규 schedule 활성화는 미수행. 해당 실패 주차 상세 funnel은 로컬에 없어 수치 확정 불가.
-- 현재 실패 중인 테스트: 없음. 로컬 전체 pytest 381 passed. 사용자 확인 production은 InsufficientCandidates로 APPLICATION_FAILED이며 SQLite finalize/R2 upload 성공; TOP5 생성 성공을 의미하지 않음.
+- 마지막으로 완료된 Phase: GitHub Actions 정규 schedule 정의 활성화 및 오프라인 회귀 검증
+- 현재 진행 중인 Phase: 기본 브랜치 Push/merge 후 첫 실제 예약 실행 관찰 대기; Codex에서는 Push/dispatch/API 호출 없음
+- 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence/실제 이전, Production One-shot Runner, 수동 validate/production 및 일요일 19:00 Asia/Seoul 예약 Workflow, 후보 부족 진단 보존
+- 아직 구현하지 않은 기능: 이번 활성화 범위의 미완성 코드/TODO 없음. 최신 변경 반영 및 Actions validate 성공은 사용자 제공 전제. 활성화 변경은 기본 브랜치 반영 후 적용되며 첫 실제 schedule run은 아직 확인하지 않음.
+- 현재 실패 중인 테스트: 없음. 로컬 전체 pytest 392 passed. 이전 사용자 production의 InsufficientCandidates/FAILED Claim은 유지하며 정상 TOP5 생성 성공과 구분함.
 - 알려진 문제: Cold Start/경계 후 1시간 초과 관측으로 Star 비교가 unknown일 수 있으며 정규 실행도 근거 부족 시 실패할 수 있음. 최신 R2 DB는 이번 점검에서 접근하지 않음. R2는 분산 잠금이 아니므로 외부 직렬화 필요. 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험은 수동 점검해야 함.
-- 다음 작업: 수정본 Push 후 Actions mode=validate 확인. 초기 정규 운영에서는 1시간 이내 Trending 수집 및 independent evidence/metrics/data gaps 진단 관찰. 2026-10-11 종료 FAILED claim 유지/동일 주차 재실행 금지. schedule 활성화는 별도 명시적 작업으로 진행.
-- 실행 방법: 이번 점검은 오프라인 pytest만 실행. production entry는 기존 `python scripts/run_weekly_live_once.py` 그대로이며 기존 claim이면 API 전 차단. 향후 진단은 Actions console 및 신규 실패 run의 `automation_runs.report.candidate_diagnostics`에서 확인. 분석 문서: `docs/PRODUCTION_CANDIDATE_DIAGNOSTICS.md`.
-- 테스트 방법: 진단/runner/history/scheduler/R2 Mock **91 passed in 3.14s**; 전체 `python -m pytest -q` **381 passed in 7.95s**; Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 외부 API 미호출.
+- 다음 작업: 이 활성화 변경을 기본 브랜치에 Push/merge하고 Workflow enabled 상태 확인. 다음 예약의 event=schedule, production step 실행, 정확한 기간/claim/pipeline/SQLite/R2 최종 상태 확인. 실패 시 funnel/exclusion/data gaps 및 원격 claim 보존 확인. 2026-10-11 종료 FAILED claim 유지/동일 주차 재실행 금지.
+- 실행 방법: `.github/workflows/weekly-report.yml`의 `cron: "0 19 * * 0"`, `timezone: "Asia/Seoul"`이 단일 예약으로 활성화됨. schedule은 mode 입력 없이 기존 `python scripts/run_weekly_live_once.py` 실행. 수동 validate/production 유지; Python Scheduler/별도 cron 동시 운영 금지.
+- 테스트 방법: 관련 Workflow/scheduler/runner/진단/R2 Mock **138 passed in 3.87s**; 전체 `python -m pytest -q` **392 passed in 7.11s**; Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 외부 API 미호출.
 
 ## Phase 검증 기록
+
+- GitHub Actions 정규 schedule 활성화 (2026-10-16): 기존 주석 3줄을 실제 단일 schedule로 전환(`0 19 * * 0`, Asia/Seoul). 기존 dispatch validate 기본값/production 선택 및 schedule 전용 production if 조건 유지. concurrency group/cancel-in-progress=false/queue=max, Secrets 8개 매핑, R2 경로, 기간 계산, Claim, finalize, InsufficientCandidates/진단 보존 및 비즈니스 로직 불변. YAML 활성 예약/중복 부재, dispatch 2모드/schedule 입력 없음 이벤트 분기, 지연 0/5/12/60/61분/24시간에도 동일한 KST 168시간 반개방 기간을 테스트. 관련138/전체392 통과, compile/diff check 통과. README의 비활성 안내를 정리하고 운영 실패 확인 절차 갱신. 기본 브랜치 반영 후 적용되며 Codex에서 실제 API/production/dispatch/Push는 수행하지 않음. 다음: 실제 첫 정규 run 관찰.
 
 - Production 후보 부족 진단 (2026-10-16): 사용자 제공 Actions 결과상 10/04~10/11 주차는 FAILED terminal claim 및 R2 업로드 정상. 10/16의 과거 주차 실행은 3600초 조건상 Trending 제외임을 코드로 확인했으나 최신 R2 DB/해당 artifact 없이 후보별 사유는 확정하지 않음. 로컬 DB는 immutable read-only 집계만 확인했으며 10/11 run 없음; 로컬 artifact는 9/06~9/13로 이번 주차와 다름. FileHandler 전용 logger/로컬 artifact에만 있던 진단을 One-shot console에 allowlist 집계로 전달하고 신규 실패 run의 기존 report JSON에 저장. data gaps 추가 및 진단 metric key를 실제 star_growth로 수정. 기존 Snapshot/점수/독립 근거/재소개/claim/R2/기간/전송 정책 불변. 0/5분/1시간/1시간 초과/5일 Trending 조건, Cold Start와 GraphQL 이전 활동, 지연 Snapshot 사용 불가 및 FAILED 관측 보존을 Mock 검증. 관련91/전체381 통과. 다음: validate 후 초기 운영 관찰 조건으로 별도 schedule 활성화 판단.
 
