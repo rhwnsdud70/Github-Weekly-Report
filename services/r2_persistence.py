@@ -1,6 +1,7 @@
 """Opt-in R2 SQLite transfer. No pipeline, scheduler or API calls occur on import."""
 from contextlib import closing
 from datetime import datetime, timezone
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -90,6 +91,7 @@ class R2DatabaseStore:
             raise SQLiteBackupError('Non-production database path; production transfer blocked')
         self._client = client
         self._owns_client = client is None
+        self.bootstrap_backup_path = None
 
     @property
     def client(self):
@@ -172,3 +174,67 @@ class R2DatabaseStore:
                 raise _safe_error('upload',error) from None
         logger.info('R2 SQLite upload completed; previous remote backup=%s',bool(backup_key))
         return backup_key
+
+    def bootstrap(self):
+        """Create the first remote production DB; never replace an existing object.
+
+        Stop all SQLite writers first. The standalone local backup is retained even
+        if upload/verification fails. Conditional PUT also protects against a remote
+        creator racing the existence check. No remote cleanup or overwrite occurs.
+        """
+        self.settings.validate_r2()
+        validate_database(self.database_path)
+        client = self.client
+        try:
+            response = client.get_object(Bucket=self.settings.r2_bucket,Key=PRODUCTION_KEY)
+        except Exception as error:
+            if not _missing_key(error):
+                raise _safe_error('bootstrap-check',error) from None
+        else:
+            response['Body'].close()
+            raise R2PersistenceError('bootstrap','REMOTE_OBJECT_EXISTS')
+
+        directory = self.database_path.parent/'r2-bootstrap-backups'
+        directory.mkdir(parents=True,exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        backup = directory/f'{stamp}-{uuid4().hex}.db'
+        # Reserve a unique path without replacing any existing local backup.
+        with backup.open('xb'):
+            pass
+        self.bootstrap_backup_path = backup
+        snapshot_database(self.database_path,backup)
+        size = backup.stat().st_size
+        digest = hashlib.sha256()
+        with backup.open('rb') as body:
+            while chunk := body.read(1024*1024):
+                digest.update(chunk)
+        checksum = digest.hexdigest()
+        try:
+            with backup.open('rb') as body:
+                client.put_object(Bucket=self.settings.r2_bucket,Key=PRODUCTION_KEY,
+                    Body=body,ContentType='application/vnd.sqlite3',IfNoneMatch='*')
+        except Exception as error:
+            safe = _safe_error('bootstrap-upload',error)
+            if safe.http_status == 412:
+                safe = R2PersistenceError('bootstrap-upload','REMOTE_OBJECT_EXISTS',412)
+            raise safe from None
+
+        # Read back bytes: ETag alone is not a portable file checksum.
+        try:
+            response = client.get_object(Bucket=self.settings.r2_bucket,Key=PRODUCTION_KEY)
+            remote_size, remote_digest = 0, hashlib.sha256()
+            with closing(response['Body']) as body:
+                while chunk := body.read(1024*1024):
+                    remote_size += len(chunk)
+                    if remote_size > size:
+                        raise R2PersistenceError('bootstrap-verify','SIZE_MISMATCH')
+                    remote_digest.update(chunk)
+            if response.get('ContentLength') != size or remote_size != size:
+                raise R2PersistenceError('bootstrap-verify','SIZE_MISMATCH')
+            if remote_digest.hexdigest() != checksum:
+                raise R2PersistenceError('bootstrap-verify','CHECKSUM_MISMATCH')
+        except R2PersistenceError:
+            raise
+        except Exception as error:
+            raise _safe_error('bootstrap-verify',error) from None
+        return {'key':PRODUCTION_KEY,'size':size,'sha256':checksum,'local_backup':backup}

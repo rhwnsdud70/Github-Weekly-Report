@@ -104,6 +104,26 @@ API 사용 순서:
 
 R2 전송 자체는 여러 작업 간 분산 잠금을 제공하지 않습니다. Workflow concurrency가 download→run→upload 전체를 직렬화하며, 별도 서버의 Runner를 동시에 실행하지 않아야 기존 SQLite claim이 원격 환경에서도 유지됩니다. 이 모듈의 테스트는 실제 R2 호출 없이 `python -m pytest -q tests/test_r2_persistence.py`로 실행합니다.
 
+## 기존 로컬 운영 DB의 R2 최초 이전
+
+GitHub Actions validate 성공 후 **기존 운영 DB를 이전**할 때 사용합니다. 기존 `upload()`는 운영 객체를 교체하므로 최초 이전에는 사용하지 않습니다. DB를 새로 초기화하는 One-shot Runner의 `--allow-initial-bootstrap`과도 별개입니다.
+
+모든 로컬 DB writer/Scheduler를 중지하고 Actions production 실행도 중지한 상태에서, 일반 Windows PowerShell의 프로젝트 루트에서 실행합니다. `.env`에 `DATABASE_PATH=data/github_weekly_report.db` 및 `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`을 설정합니다. GitHub에 등록한 Secrets는 로컬 PowerShell에 자동 전달되지 않습니다. 기존 OS 환경변수는 `.env`보다 우선하므로 의도한 운영 경로를 확인하세요. GitHub/OpenAI/Telegram 설정은 이 명령에 필요하지 않습니다.
+
+```powershell
+Set-Location C:\Github-weekly-report
+python -m pip install -r requirements.txt
+python scripts/bootstrap_r2_database.py
+```
+
+명령은 schema/integrity/foreign key 및 기존 non-live/fixture 검사를 재사용합니다. 원격 `production/github_weekly_report.db`가 존재하면 거부하며, 인증·권한·네트워크 오류나 불명확한 404도 최초 실행으로 취급하지 않습니다. 없는 객체만 `If-None-Match: *` 조건부 PUT으로 생성하므로 확인 직후 다른 실행이 객체를 생성해도 덮어쓰지 않습니다. [R2는 이 조건부 생성을 원자적으로 처리합니다](https://developers.cloudflare.com/r2/api/s3/api/).
+
+WAL checkpoint 후 연결을 닫고 SQLite backup API로 단일 파일을 export합니다. 원본 DB/claim/history를 삭제하거나 교체하지 않으며, 검증용 로컬 백업은 DB 옆 `r2-bootstrap-backups/<UTC시각>-<UUID>.db`에 보존합니다. 체크포인트는 정상적인 WAL 내용을 원본 DB에 반영할 수 있습니다. export 실패 시에도 남은 파일을 자동 삭제하지 않으므로 복구에 쓰기 전 무결성을 검사해야 합니다. 최초 객체라 이전 원격 백업은 없으며, 이후 정상 운영의 기존 `upload()`가 `backups/`에 원격 백업을 만듭니다.
+
+업로드 후 객체를 다시 읽어 존재 여부·ContentLength·실제 byte 수·SHA-256을 로컬 백업과 비교한 경우에만 `Initial R2 migration: SUCCESS` 및 종료 코드 0을 출력합니다. 실패는 종료 코드 1이며 강제 덮어쓰기/삭제 옵션은 없습니다. timeout 또는 검증 실패 때는 이미 원격에 생성됐을 가능성이 있으므로 원본과 백업을 보존하고 원격 상태를 확인하세요. 재실행해도 존재하는 객체를 교체하지 않습니다.
+
+이 명령은 R2만 호출하며 GitHub 수집/LLM/Telegram/Pipeline/운영 claim 갱신/스케줄 등록을 하지 않습니다. Codex에서는 Mock 검증만 수행했습니다. 관련 테스트: `python -m pytest -q tests/test_r2_bootstrap.py tests/test_r2_persistence.py`. 실제 이전 성공을 확인한 다음 별도 단계에서 Actions production 수동 실행을 진행하며, 정규 schedule은 계속 비활성입니다.
+
 ## R2 Production One-shot Runner
 
 저장소 루트의 새 작업 환경에서 다음 명령을 실행합니다. 기본 로컬 DB는 `data/github_weekly_report.db`이고 설정의 `DATABASE_PATH`를 사용합니다. 기존 DB 또는 WAL이 있는 작업 폴더는 복원 보호에 의해 차단되며 Runner가 삭제하거나 덮어쓰지 않습니다.

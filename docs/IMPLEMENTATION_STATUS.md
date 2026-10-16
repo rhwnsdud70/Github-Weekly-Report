@@ -1,16 +1,18 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: GitHub Actions pytest의 운영 환경변수 상속 문제 수정 및 양 환경 회귀 검증
-- 현재 진행 중인 Phase: 수정본 Push 후 Workflow validate 재실행 대기, 예약 자동 실행 비활성
-- 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow
-- 아직 구현하지 않은 기능: 이번 Workflow 요청 범위의 미완성 코드/TODO 없음. GitHub-hosted 실행/실제 R2 연결 검증과 예약 활성화는 미수행.
-- 현재 실패 중인 테스트: 로컬 pytest 실패 없음. 사용자 GitHub 실행의 설정 검사는 성공했고 Offline pytest 단일 실패는 수정 완료, GitHub 재실행 대기.
+- 마지막으로 완료된 Phase: 기존 로컬 운영 SQLite DB의 R2 최초 이전 전용 명령 및 Mock 검증
+- 현재 진행 중인 Phase: Windows PowerShell에서 실제 R2 최초 이전 실행 대기, production 실행 및 예약 자동 실행 비활성
+- 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence, Production One-shot Runner, 수동 validate/production Workflow, R2 최초 이전 전용 bootstrap
+- 아직 구현하지 않은 기능: 이번 최초 이전 준비 범위의 미완성 코드/TODO 없음. 실제 R2 이전/production 실행/예약 활성화는 미수행.
+- 현재 실패 중인 테스트: 없음. 사용자 확인 Actions validate의 dependencies/configuration/offline tests 성공, production skipped. 로컬 전체 pytest 362 passed.
 - 알려진 문제: Codex 환경은 외부 API/패키지 다운로드가 차단되며 boto3/botocore 미설치. R2/Runner는 Mock 검증만 완료. R2는 분산 잠금이 아니므로 전체 restore→run→upload의 외부 직렬화가 필요하며, 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험을 수동 점검해야 함.
-- 다음 작업: 수정본 Push 후 Actions의 GitHub Weekly Report → Run workflow → 업데이트된 브랜치 → mode=validate로 새 실행. Configuration와 Offline regression tests 성공 및 Production runner SKIPPED를 확인. Production 실행/예약 활성화는 별도 단계이며 Artifact 업로드는 비활성 유지.
-- 실행 방법: GitHub Actions → GitHub Weekly Report → Run workflow → validate(기본). production을 명시적으로 선택할 때만 기존 `python scripts/run_weekly_live_once.py`가 실제 API를 사용함. Workflow는 bootstrap을 허용하지 않으며 Codex에서는 실행하지 않음.
-- 테스트 방법: `& 'C:/Users/고준영/.pyenv/pyenv-win/versions/3.11.9/python.exe' -m pytest -q` (DATABASE_PATH 없음 **340 passed in 4.84s**, 주입 시 **340 passed in 4.81s**)
+- 다음 작업: 로컬/원격 writer를 중지하고 로컬 .env의 운영 DB/R2 설정 확인 후 `python scripts/bootstrap_r2_database.py`를 PowerShell에서 실행. SUCCESS와 원격 크기/SHA-256 일치를 확인한 뒤 별도 단계에서 Actions production 수동 검증. 정규 schedule은 아직 활성화하지 않음.
+- 실행 방법: 저장소 루트에서 `python scripts/bootstrap_r2_database.py`. 기존 운영 DB를 이전하며 신규 초기화용 One-shot 옵션과 다름. 원격 객체가 있으면 거부하며 force/delete 옵션 없음. GitHub/OpenAI/Telegram/Pipeline을 호출하지 않음.
+- 테스트 방법: `python -m pytest -q tests/test_r2_bootstrap.py tests/test_r2_persistence.py` (**55 passed**), `python -m pytest -q` (**362 passed in 6.47s**). 실제 API 호출 없음.
 
 ## Phase 검증 기록
+
+- R2 최초 이전 준비 (2026-10-16): 기존 `upload()`는 원격 DB 교체용이므로 그대로 재사용하지 않고 `R2DatabaseStore.bootstrap()` 및 `scripts/bootstrap_r2_database.py` 추가. 기존 schema/integrity/fixture 검증과 WAL checkpoint/export 재사용. strict NoSuchKey+404만 최초 객체 없음으로 인정하며 기존 객체는 거부. `IfNoneMatch='*'` 조건부 생성으로 racing writer의 객체도 교체하지 않음. export 백업을 DB 옆 `r2-bootstrap-backups/`에 성공/실패 모두 보존하고, 업로드 후 GET으로 ContentLength/실제 크기/SHA-256 검증. 원격 삭제/강제 덮어쓰기 옵션 없음. 관련 Mock **55 passed**, 전체 **362 passed in 6.47s**, 변경 Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 실제 API 미호출; production DB/claim/선정/Scheduler/전송 로직 변경 없음. 다음: 사용자 PowerShell에서 최초 이전 후 별도 production 수동 검증.
 
 - Phase 1: 프로젝트 기본 구조; `1 passed in 0.04s`; 다음: Phase 2 설정 및 규칙
 
