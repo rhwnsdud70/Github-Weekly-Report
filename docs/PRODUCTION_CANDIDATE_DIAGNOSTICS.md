@@ -1,5 +1,7 @@
 # Production InsufficientCandidates 점검 (2026-10-16)
 
+후속 변경(2026-10-27): Workflow 요청 시각은 19:07로 변경하고 보고 경계 19:00 및 3600초 제한은 유지했다. 실제 실행 지연 진단/현재·이전 관측 초과 사유와 신규 Snapshot 배치 완료 시각 기록을 추가했다. 상세 원인 및 관측 설계는 [DELAY_AND_OBSERVATION_PLAN.md](DELAY_AND_OBSERVATION_PLAN.md) 참조. 아래는 10월 16일 점검 기록이다.
+
 이번 점검은 코드와 로컬 자료 읽기, 임시 DB/Mock 테스트만 사용했다. R2 다운로드/업로드, 실제 API 호출, 운영 DB 변경, 기존 claim 변경 및 schedule 활성화는 하지 않았다.
 
 ## 확인된 사실과 확인 한계

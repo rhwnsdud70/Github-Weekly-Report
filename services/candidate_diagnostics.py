@@ -17,7 +17,8 @@ EXCLUSION_REASONS = frozenset({
     'previously_reported_without_meaningful_change', 'metric_unavailable',
     'security_evidence_insufficient', 'validation_failed', 'other'})
 GAP_FIELDS = ('previous_snapshot_missing', 'previous_snapshot_unusable',
-              'star_delta_unknown', 'star_growth_unknown', 'activity_unavailable')
+              'star_delta_unknown', 'star_growth_unknown', 'activity_unavailable',
+              'current_observation_outside_window', 'previous_observation_outside_window')
 DIAGNOSTIC_KINDS = frozenset({'NO_DISCOVERY_CANDIDATES', 'METRIC_COLLECTION_DEGRADED',
                             'INSUFFICIENT_EVIDENCE', 'INSUFFICIENT_ELIGIBLE_CANDIDATES'})
 
@@ -144,6 +145,9 @@ def build_candidate_diagnostics(candidates, collector_counts=None, metric_candid
             gaps['previous_snapshot_missing'] += 1
         elif candidate.previous.get('snapshot_usable') is False:
             gaps['previous_snapshot_unusable'] += 1
+        for reason in ('current_observation_outside_window','previous_observation_outside_window'):
+            if reason in candidate.previous.get('snapshot_unusable_reasons',[]):
+                gaps[reason] += 1
         for name in ('star_delta', 'star_growth'):
             if candidate.metric(name).status == 'unknown':
                 gaps[name+'_unknown'] += 1

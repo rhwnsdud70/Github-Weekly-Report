@@ -25,7 +25,7 @@ def test_scheduler_clock_injection():
     assert jobs[0].end.hour == 19
 
 
-@pytest.mark.parametrize('delay_minutes',[0,5,12,60,61,24*60])
+@pytest.mark.parametrize('delay_minutes',[0,5,7,12,30,60,61,240,24*60])
 def test_actions_delay_keeps_completed_sunday_period(delay_minutes):
     boundary = datetime(2026,10,18,19,tzinfo=KST)
     period = report_period(boundary+timedelta(minutes=delay_minutes))

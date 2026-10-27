@@ -14,6 +14,7 @@ from services.deep_analysis_service import DeepAnalysisCollector
 from services.duplicate_service import merge_candidates, allow_repeat
 from services.evidence_service import structure_evidence
 from services.history_service import attach_history
+from services.observation_timing import observation_allowed
 from services.metric_service import collect_metrics_batch
 from services.narrative_service import NarrativeService
 from services.persistence_service import persist_week, persist_measurements
@@ -69,8 +70,9 @@ class ReportPipeline:
         measured_at = self.clock().isoformat()
         try:
             # Trending is a live rolling page, not a historical API. Do not apply today's rank to an old week.
-            current_age = (self.clock()-period.end).total_seconds()
-            include_trending = mode != 'integration-test' and (mode == 'dry-run' or 0 <= current_age <= rules.SNAPSHOT_BOUNDARY_TOLERANCE_SECONDS)
+            trending_observed_at = self.clock()
+            include_trending = mode != 'integration-test' and (
+                mode == 'dry-run' or observation_allowed(trending_observed_at,period.end))
             if mode == 'integration-test':
                 collector.errors.append('Historical Trending: synthetic fixture for integration testing')
             elif not include_trending:
@@ -88,6 +90,9 @@ class ReportPipeline:
                     candidates = merge_candidates(collector.collect(period,limit,include_trending,names))
                 finally:
                     self.github.end_budget()
+                # Real batch completion time, not a pre-request timestamp that can
+                # falsely validate snapshots if metadata collection crosses 20:00.
+                measured_at = self.clock().isoformat()
             if integration_fixture:
                 integration_fixture.seed_history(db,candidates,period)
             if not candidate_cache:

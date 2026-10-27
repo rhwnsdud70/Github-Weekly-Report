@@ -86,7 +86,7 @@ python scripts\run_full_top5_live.py --integration-test
 
 ## Cloudflare R2 SQLite 저장·복원
 
-R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 아래 Production One-shot Runner 및 GitHub Actions 수동/예약 Workflow에서 사용하며 기존 CLI/Pipeline/Scheduler의 동작은 유지합니다. Workflow의 정규 예약은 매주 일요일 19:00 Asia/Seoul로 활성화되어 있으며 기본 브랜치 반영 후 적용됩니다. 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
+R2 전송은 `services/r2_persistence.py`의 명시적 API로 제공됩니다. 아래 Production One-shot Runner 및 GitHub Actions 수동/예약 Workflow에서 사용하며 기존 CLI/Pipeline/Scheduler의 동작은 유지합니다. Workflow 요청 시각은 매주 일요일 19:07 Asia/Seoul이며 보고 경계는 19:00으로 유지됩니다. 기본 브랜치 반영 후 적용되며 운영 DB 기본 경로와 기존 7개 테이블 구조를 그대로 사용합니다.
 
 추가 설정은 `.env.example`의 `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`입니다. 의존성은 `python -m pip install -r requirements.txt`로 설치합니다. R2 SDK는 [Cloudflare의 boto3 설정](https://developers.cloudflare.com/r2/get-started/s3/)에 맞춰 S3 endpoint와 region `auto`를 사용합니다. Key/Secret/endpoint 또는 전체 SDK 오류를 로그로 출력하지 않습니다.
 
@@ -166,7 +166,7 @@ Production `InsufficientCandidates` 발생 시 콘솔에서 Candidate funnel / E
 
 ## GitHub Actions 수동 검증 및 운영 활성화
 
-`.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. **정규 예약은 매주 일요일 19:00 Asia/Seoul로 활성화**되어 있습니다. Workflow 파일을 기본 브랜치에 반영해야 GitHub 예약에 적용됩니다. 수동 실행은 **Actions → GitHub Weekly Report → Run workflow**에서 기존 mode를 선택합니다.
+`.github/workflows/weekly-report.yml`은 Ubuntu GitHub-hosted Runner에서 Python 3.11을 설정하고 requirements 설치 및 `pip check` 후 설정 검사를 실행합니다. **정규 Workflow 요청은 매주 일요일 19:07 Asia/Seoul**입니다. 정각 부하를 피하기 위한 완화이며 실제 실행 시각은 보장하지 않습니다. Workflow 파일을 기본 브랜치에 반영해야 GitHub 예약에 적용됩니다. 수동 실행은 **Actions → GitHub Weekly Report → Run workflow**에서 기존 mode를 선택합니다.
 
 - `validate`(기본값): Secret 존재 여부/설정 형식, production 경로, 프로젝트 파일, SDK import를 검사하고 compile/전체 pytest를 수행합니다. DB를 열거나 R2 client를 만들지 않고 수집/OpenAI/Telegram/R2 애플리케이션 API를 호출하지 않습니다. GitHub-hosted 환경 준비·의존성 설치에는 네트워크가 필요합니다. 인증 성공/원격 DB 존재 여부는 이 모드로 검증하지 않습니다.
 - `production`: 위 offline 설정 검사를 통과한 뒤 `python scripts/run_weekly_live_once.py`를 실행합니다. 실제 GitHub/OpenAI/Telegram/R2 API를 사용하며 발송할 수 있습니다. 자동 bootstrap은 없고, Runner의 nonzero 종료 코드는 Workflow 실패로 유지됩니다. 기존 claim이면 Runner가 API client 생성 전에 차단하고 안전하게 종료합니다.
@@ -200,11 +200,13 @@ Job timeout은 60분으로, 수집·최대 TOP 5의 OpenAI 2단계·Telegram ret
 
 ```yaml
   schedule:
-    - cron: "0 19 * * 0"
+    - cron: "7 19 * * 0"
       timezone: "Asia/Seoul"
 ```
 
-예약은 일요일 19:00 KST이며 [GitHub schedule timezone 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)의 구문을 사용합니다. schedule 이벤트는 production 경로를 선택하고, 예약이 몇 분 지연돼도 기존 Runner가 가장 최근 완료된 일요일 19:00 경계를 사용합니다. 기간은 `이전 일요일 19:00 <= event < 이번 일요일 19:00`의 168시간입니다. 다른 서버/Workflow가 동일 R2 객체를 쓰면 같은 저장소의 concurrency만으로는 보호되지 않으므로 운영 writer를 단일화합니다.
+예약 요청은 일요일 19:07 KST이며 [GitHub schedule timezone 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)의 구문을 사용합니다. schedule 이벤트는 production 경로를 선택하고, 예약이 지연돼도 기존 Runner가 가장 최근 완료된 일요일 **19:00** 경계를 사용합니다. 기간은 `이전 일요일 19:00 <= event < 이번 일요일 19:00`의 168시간입니다. 다른 서버/Workflow가 동일 R2 객체를 쓰면 같은 저장소의 concurrency만으로는 보호되지 않으므로 운영 writer를 단일화합니다.
+
+Runner는 실제 KST 시작/restore 후 preflight 시각과 보고 종료 후 경과 시간을 출력하고 Trending/Snapshot의 시간상 허용 여부를 표시합니다. 기존 3600초 제한은 유지하며 이전 Snapshot이 없는 경우도 계속 unknown입니다. Snapshot의 신규 measured_at은 metadata 배치 완료 시각이고, 비교 불가 사유는 현재/이전 관측 window 초과로 구분합니다. [지연 원인 점검과 후속 관측 A/B/C 설계](docs/DELAY_AND_OBSERVATION_PLAN.md)를 참고하세요. 별도 관측 Workflow/DB schema 변경은 아직 구현하지 않았습니다.
 
 `InsufficientCandidates`이면 Candidate funnel / Exclusion reasons / Data gaps를 확인합니다. Cold Start 또는 경계 후 1시간 초과 지연으로 Trending/Star 비교 근거가 부족할 수 있으며, 기준을 완화해 보고서를 채우지 않습니다. FAILED terminal claim 및 R2 upload 성공 여부를 확인하고 해당 주차 claim은 유지합니다. 예외/취소/timeout/업로드 실패 시 원격 claim과 Telegram 발송 여부를 먼저 확인하고 자동 재발송하거나 claim을 삭제하지 않습니다. 진단 집계는 신규 실패 run의 기존 DB JSON에도 보존됩니다.
 

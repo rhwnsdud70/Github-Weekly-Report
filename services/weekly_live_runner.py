@@ -20,6 +20,7 @@ from services.r2_persistence import R2DatabaseStore, R2PersistenceError
 from services.ranking_service import InsufficientCandidates
 from services.candidate_diagnostics import candidate_diagnostic_summary, format_candidate_diagnostics
 from services.scheduler import KST, report_period
+from services.observation_timing import format_observation_timing
 from telegram.sender import TelegramSender
 
 
@@ -119,6 +120,7 @@ def run_weekly_live_once(settings, *, allow_initial_bootstrap=False, output='art
             emit(f'Period start: {period.start.isoformat()}')
             emit(f'Period end: {period.end.isoformat()}')
             emit('Period rule: latest completed Sunday 19:00 KST; start <= event < end; 168 hours')
+            emit(format_observation_timing(period,started_at,clock()))
 
             database = Database(settings.database_path)
             try:

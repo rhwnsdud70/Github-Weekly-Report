@@ -31,10 +31,10 @@ def test_workflow_valid_yaml_and_default_dispatch_is_validate_only():
     assert 'push' not in parsed['on'] and 'pull_request' not in parsed['on']
 
 
-def test_enabled_schedule_has_exact_kst_sunday_1900_rule_without_duplicates():
+def test_enabled_schedule_requests_kst_sunday_1907_without_duplicates():
     lines = WORKFLOW_PATH.read_text(encoding='utf-8').splitlines()
     assert lines.count('  schedule:') == 1
-    assert workflow()['on']['schedule'] == [{'cron':'0 19 * * 0','timezone':'Asia/Seoul'}]
+    assert workflow()['on']['schedule'] == [{'cron':'7 19 * * 0','timezone':'Asia/Seoul'}]
 
 
 @pytest.mark.parametrize('event,mode,production,offline_tests',[

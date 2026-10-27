@@ -1,16 +1,18 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: GitHub Actions 정규 schedule 정의 활성화 및 오프라인 회귀 검증
-- 현재 진행 중인 Phase: 기본 브랜치 Push/merge 후 첫 실제 예약 실행 관찰 대기; Codex에서는 Push/dispatch/API 호출 없음
-- 완료된 기능: Phase 1~25, 사용자 확인 GitHub/OpenAI/Telegram 실제 검증 및 integration-test E2E, R2 Persistence/실제 이전, Production One-shot Runner, 수동 validate/production 및 일요일 19:00 Asia/Seoul 예약 Workflow, 후보 부족 진단 보존
-- 아직 구현하지 않은 기능: 이번 활성화 범위의 미완성 코드/TODO 없음. 최신 변경 반영 및 Actions validate 성공은 사용자 제공 전제. 활성화 변경은 기본 브랜치 반영 후 적용되며 첫 실제 schedule run은 아직 확인하지 않음.
-- 현재 실패 중인 테스트: 없음. 로컬 전체 pytest 392 passed. 이전 사용자 production의 InsufficientCandidates/FAILED Claim은 유지하며 정상 TOP5 생성 성공과 구분함.
-- 알려진 문제: Cold Start/경계 후 1시간 초과 관측으로 Star 비교가 unknown일 수 있으며 정규 실행도 근거 부족 시 실패할 수 있음. 최신 R2 DB는 이번 점검에서 접근하지 않음. R2는 분산 잠금이 아니므로 외부 직렬화 필요. 강제 종료/업로드 실패 시 원격 claim 미보존에 따른 중복 위험은 수동 점검해야 함.
-- 다음 작업: 이 활성화 변경을 기본 브랜치에 Push/merge하고 Workflow enabled 상태 확인. 다음 예약의 event=schedule, production step 실행, 정확한 기간/claim/pipeline/SQLite/R2 최종 상태 확인. 실패 시 funnel/exclusion/data gaps 및 원격 claim 보존 확인. 2026-10-11 종료 FAILED claim 유지/동일 주차 재실행 금지.
-- 실행 방법: `.github/workflows/weekly-report.yml`의 `cron: "0 19 * * 0"`, `timezone: "Asia/Seoul"`이 단일 예약으로 활성화됨. schedule은 mode 입력 없이 기존 `python scripts/run_weekly_live_once.py` 실행. 수동 validate/production 유지; Python Scheduler/별도 cron 동시 운영 금지.
-- 테스트 방법: 관련 Workflow/scheduler/runner/진단/R2 Mock **138 passed in 3.87s**; 전체 `python -m pytest -q` **392 passed in 7.11s**; Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 외부 API 미호출.
+- 마지막으로 완료된 Phase: 예약 요청 19:07 변경, 실제 지연 진단 및 Snapshot 관측 시각/불가 사유 최소 보완
+- 현재 진행 중인 Phase: 사용자 기본 브랜치 반영/validate 후 다음 예약 관찰 대기. 별도 관측 Workflow/schema는 설계만 제안하며 미구현.
+- 완료된 기능: Phase 1~25, 실제 GitHub/OpenAI/Telegram E2E, R2/Production One-shot, 수동 validate/production 및 일요일 19:07 Asia/Seoul 요청 Workflow(보고 경계 19:00), 후보 부족·지연 진단 및 FAILED 관측 보존
+- 아직 구현하지 않은 기능: 이번 최소 개선 범위 TODO 없음. A/B 경량 관측·pool·시계열 저장·schema 변경은 후속 승인 작업. Cold Start 및 Actions 지연 자체는 이번 변경으로 해결되었다고 간주하지 않음.
+- 현재 실패 중인 테스트: 없음. 전체 pytest 412 passed. 사용자 2026-10-25 schedule은 23:02:45 생성/시작 후 InsufficientCandidates, FAILED claim 및 R2 보존 성공. 이 실패 주차 재실행 금지.
+- 알려진 문제: 19:07은 정각 회피 완화이며 정시 보장 아님. 과거 Snapshot이 없는 신규/미재발견 저장소와 1시간 초과 지연에서는 비교가 unknown이며 추가 관측 없이는 반복 실패 가능. Discussion은 candidate 단계에서 미수집, metric 대상은 처음10개+Critical. 운영 DB/API 미접근. R2 외부 직렬화 및 업로드 실패/강제 종료 중복 위험 점검 필요.
+- 다음 작업: 사용자 Push/validate 후 다음 예약의 19:00 보고 경계, 실제 start/preflight/delay/eligibility 및 current/previous window 초과 사유 확인. 10/11 및 10/25 FAILED claim 유지/동일 주차 재실행 금지. 필요하면 후속 승인으로 A 경계 관측/pool/저장 설계를 구현하고 B 확장은 별도 검토. 상세: docs/DELAY_AND_OBSERVATION_PLAN.md.
+- 실행 방법: `.github/workflows/weekly-report.yml`의 `cron: "7 19 * * 0"`, `timezone: "Asia/Seoul"`; 보고 기간은 기존 report_period()의 일요일19:00 경계/168시간 반개방. schedule→기존 One-shot, 수동 validate/production 유지. Codex에서는 배포/실행하지 않으며 별도 Scheduler 동시 운영 금지.
+- 테스트 방법: 관련 Workflow/scheduler/runner/진단/history/evidence/integration Mock **133 passed in 2.59s**; 전체 `python -m pytest -q` **412 passed in 7.17s**; Python compile 및 `git diff --check` 통과(CRLF 안내만 있음). 모든 실험은 Mock/임시 DB, 실제 API 미호출.
 
 ## Phase 검증 기록
+
+- 예약 지연 대응 (2026-10-27): 사용자 10/25 실행은 종료 후14565초 지연, discovered36/deduplicated33/metric10완료/evidence0/previous missing31/unusable2/star unknown33. 내부 GitHub 원인은 미확정. cron만19:07로 변경하고 보고 경계19:00/168h/1시간상한/선정기준/Claim/R2/Secrets/전송 유지. 실제 start 및 restore 후 preflight 지연 진단 추가, missing과 window초과 사유 분리 및 현재/이전 초과 카운트 보존. metadata 수집이 허용시간을 넘겼는데 수집 전 시각으로 정상 취급될 수 있던 문제를 실제 배치 완료 시각 기록으로 수정(기존 행 미변경). 독립 근거 전달 누락은 재현되지 않음; activity+release만으로5개 선정 및 중복 신호 미증가, 실패 관측의 다음 주 사용/지연 시 사용불가 검증. 관련133/전체412 및 compile/diff 통과. A/B/C 비교와 후속 관측 계획 문서화, 신규 Workflow/schema/API 호출/배포 없음. 다음: 사용자 Push/validate/다음 예약 관찰.
 
 - GitHub Actions 정규 schedule 활성화 (2026-10-16): 기존 주석 3줄을 실제 단일 schedule로 전환(`0 19 * * 0`, Asia/Seoul). 기존 dispatch validate 기본값/production 선택 및 schedule 전용 production if 조건 유지. concurrency group/cancel-in-progress=false/queue=max, Secrets 8개 매핑, R2 경로, 기간 계산, Claim, finalize, InsufficientCandidates/진단 보존 및 비즈니스 로직 불변. YAML 활성 예약/중복 부재, dispatch 2모드/schedule 입력 없음 이벤트 분기, 지연 0/5/12/60/61분/24시간에도 동일한 KST 168시간 반개방 기간을 테스트. 관련138/전체392 통과, compile/diff check 통과. README의 비활성 안내를 정리하고 운영 실패 확인 절차 갱신. 기본 브랜치 반영 후 적용되며 Codex에서 실제 API/production/dispatch/Push는 수행하지 않음. 다음: 실제 첫 정규 run 관찰.
 
