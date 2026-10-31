@@ -21,6 +21,8 @@ def dumps(value):
 def candidate_from_dict(raw):
     raw = dict(raw)
     raw['repository'] = Repository(**raw['repository'])
+    if raw.get('latest_repository') is not None:
+        raw['latest_repository'] = Repository(**raw['latest_repository'])
     raw['events'] = [Event(**event) for event in raw['events']]
     raw['metrics'] = {key:Metric(**metric) for key,metric in raw['metrics'].items()}
     raw['score'] = ScoreResult(**raw['score']) if raw['score'] else None

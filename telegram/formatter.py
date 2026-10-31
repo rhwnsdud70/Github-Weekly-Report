@@ -34,7 +34,7 @@ def weekly_trends(report):
 
 
 def top_message(candidate, rank, integration_test=False):
-    repo, score, narrative = candidate.repository, candidate.score, candidate.narrative
+    repo, score, narrative = candidate.latest_repository or candidate.repository, candidate.score, candidate.narrative
     value = lambda name: candidate.metric(name).value
     trending = UNKNOWN if value('trending') is None else ('미진입' if not value('trending') else
         ('진입 확인 (관측 순위 ' + str(value('trending_rank')) + ')' if value('trending_rank') else '진입 확인 · 순위 미확인'))
@@ -48,6 +48,16 @@ def top_message(candidate, rank, integration_test=False):
             f'현재 Star: {display(repo.stars)}', f"최근 7일 Star 증가: {display(value('star_delta'))}",
             f"증가율: {display(value('star_growth'), '%')}", f'Trending: {trending}',
             f"Issue / PR: {display(value('issues'))} / {display(value('pulls'))}", f'Release: {release_text}'])]
+    if candidate.observation.get('enabled'):
+        current = ((candidate.observation.get('repository') or {}).get('current') or {}).get('snapshot') or {}
+        observed_at = current.get('provenance',{}).get('observed_at') or UNKNOWN
+        sections[1] += (f'\n최신 metadata 관측: {candidate.latest_observed_at or UNKNOWN}'
+                        f'\n최신 Fork: {display(repo.forks)}'
+                        f'\n평가 기준 Star: {display(candidate.repository.stars)} (관측: {observed_at})'
+                        f'\n평가 기준 Fork: {display(candidate.repository.forks)}')
+        page = candidate.observation.get('trending') or {}
+        if value('trending') is True:
+            sections[1] += '\nTrending 관측: '+str((page.get('provenance') or {}).get('observed_at') or UNKNOWN)
     if integration_test and 'integration-test-fixture' in candidate.collection_sources:
         sections[1] += '\n\n' + FIXTURE_METRIC_NOTE
     why = [section(label,narrative[key]) for key,label in [

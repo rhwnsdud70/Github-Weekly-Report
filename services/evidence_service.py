@@ -98,6 +98,18 @@ def structure_evidence(candidate, documents):
     evidence['metrics'] = {key: asdict(metric) for key, metric in candidate.metrics.items()}
     evidence['changes_since_report'] = candidate.changes_since_report
     evidence['repository'] = asdict(candidate.repository)
+    if candidate.observation.get('enabled'):
+        selected = ((candidate.observation.get('repository') or {}).get('current') or {}).get('snapshot') or {}
+        evidence['repository_observed_at'] = selected.get('provenance',{}).get('observed_at')
+        evidence['latest_repository'] = asdict(candidate.latest_repository)
+        evidence['latest_repository_observed_at'] = candidate.latest_observed_at
+        evidence['repository'].update({
+            'star_fork_basis':'boundary evaluation observation',
+            'star_fork_observed_at':evidence['repository_observed_at'],
+            'latest_stars':candidate.latest_repository.stars,
+            'latest_forks':candidate.latest_repository.forks,
+            'latest_observed_at':candidate.latest_observed_at,
+        })
     evidence['source_manifest'] = getattr(candidate, 'deep_analysis_manifest', {})
     evidence['validation_diagnostics'] = {
         'collection': getattr(candidate, 'deep_analysis_diagnostics', {})}

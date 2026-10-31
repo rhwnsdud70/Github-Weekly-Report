@@ -56,7 +56,7 @@ def _provenance(stored, row):
         row.request_started_at,row.observed_at)
 
 
-def _snapshot_selection(rows):
+def _snapshot_selection(rows, prefer_objects=False):
     if not rows: return SnapshotSelection('MISSING')
     # Inspect ALL equal-time groups before earliest selection. Later conflicting
     # observations are not silently hidden behind a convenient earlier value.
@@ -75,6 +75,9 @@ def _snapshot_selection(rows):
             conflicts.extend(r.provenance for r in group)
     if conflicts:
         return SnapshotSelection('CONFLICT',conflict_sources=tuple(sorted(set(conflicts),key=_tie)))
+    if prefer_objects:
+        objects = [r for r in rows if r.provenance.source_type != 'legacy_sqlite_snapshot']
+        if objects: rows = objects
     return SnapshotSelection('CONFIRMED',min(rows,key=lambda r:_tie(r.provenance)))
 
 
@@ -103,7 +106,7 @@ def _comparison(current, previous):
 
 
 def consume_observations(*, store, period, cutoff, repository_ids=(), legacy_snapshots=(),
-                         latest_metadata=()) -> ObservationContext:
+                         latest_metadata=(), prefer_object_snapshots=False) -> ObservationContext:
     """Read current/previous boundary once, freeze provenance and select honestly.
 
     Inputs are detached immutable DTOs, not a database handle. A fresh report_read
@@ -113,6 +116,8 @@ def consume_observations(*, store, period, cutoff, repository_ids=(), legacy_sna
     """
     try:
         cutoff = _time(cutoff)
+        if type(prefer_object_snapshots) is not bool:
+            raise ObservationConsumerError('INVALID_CONSUMER_INPUT')
         start,end = _utc(period.start),_utc(period.end)
         if (end-start != timedelta(hours=168) or report_period(end).end != end or end > cutoff
                 or report_period(cutoff).end != end):
@@ -236,7 +241,7 @@ def consume_observations(*, store, period, cutoff, repository_ids=(), legacy_sna
         selections = []
         for boundary in (end,start):
             selection = SnapshotSelection('UNAVAILABLE') if failed else _snapshot_selection(
-                [r for r in readings[boundary] if r.github_id == identity])
+                [r for r in readings[boundary] if r.github_id == identity],prefer_object_snapshots)
             selections.append(selection)
             if selection.status in {'MISSING','CONFLICT','UNAVAILABLE'}:
                 diagnostics.append(ConsumerDiagnostic('OBSERVATION_'+selection.status,boundary,identity))

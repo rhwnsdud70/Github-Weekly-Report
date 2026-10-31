@@ -9,12 +9,17 @@ from models.serialization import dumps, candidate_from_dict
 from services.candidate_service import CandidateCollector
 from services.candidate_diagnostics import (
     build_candidate_diagnostics, candidate_diagnostic_summary, format_candidate_diagnostics,
+    format_observation_diagnostics,
 )
 from services.deep_analysis_service import DeepAnalysisCollector
 from services.duplicate_service import merge_candidates, allow_repeat
 from services.evidence_service import structure_evidence
 from services.history_service import attach_history
 from services.observation_timing import observation_allowed
+from services.observation_pipeline import (
+    legacy_inputs, validate_pipeline_context, apply_observation, observation_counts,
+    safe_observation_failure,
+)
 from services.metric_service import collect_metrics_batch
 from services.narrative_service import NarrativeService
 from services.persistence_service import persist_week, persist_measurements
@@ -37,10 +42,11 @@ def write_output(report, output, banner=None):
 
 
 class ReportPipeline:
-    def __init__(self, database, github, web, llm=None, sender=None, clock=None):
+    def __init__(self, database, github, web, llm=None, sender=None, clock=None, observation_loader=None):
         self.database, self.github, self.web = database, github, web
         self.llm, self.sender = llm, sender
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.observation_loader = observation_loader
 
     def run(self, period, mode='dry-run', limit=rules.CANDIDATE_LIMIT, output='artifacts/report',
             structure_only=False, candidate_cache=None, integration_fixture=None):
@@ -66,6 +72,7 @@ class ReportPipeline:
         candidates = []
         metric_candidates = []
         failure_diagnostics = None
+        observation_diagnostics = None
         collector = CandidateCollector(self.github,self.web)
         measured_at = self.clock().isoformat()
         try:
@@ -103,6 +110,34 @@ class ReportPipeline:
                         history_observed_at = (integration_fixture.observed_at(period)
                                                if integration_fixture else measured_at)
                         attach_history(candidate,db,period,history_observed_at)
+                    # The atomic Claim above has succeeded, and real discovery
+                    # metadata/history is now available. No reads before Claim.
+                    if mode == 'live' and self.observation_loader is not None:
+                        context = None
+                        unavailable = False
+                        load_error = None
+                        cutoff = self.clock().astimezone(timezone.utc)
+                        try:
+                            context = validate_pipeline_context(self.observation_loader(
+                                period,cutoff,legacy_inputs(candidates,period)),period,cutoff)
+                            unavailable = any(d.category == 'OBSERVATION_STORE_UNAVAILABLE' for d in context.diagnostics)
+                        except Exception as observation_error:
+                            # Optional observation failure never replaces or
+                            # restores the production DB, nor exposes SDK text.
+                            unavailable = True
+                            load_error = safe_observation_failure(observation_error)
+                            logger.warning('Observation load: UNAVAILABLE; optional source rejected')
+                        for candidate in candidates:
+                            apply_observation(candidate,context,measured_at,unavailable=unavailable,load_error=load_error)
+                        if context and context.trending.status == 'CONFIRMED':
+                            # Discovery's unavailable live page is distinct from
+                            # the actual stored rolling page used for scoring.
+                            collector.errors = [
+                                'Live Trending unavailable outside boundary window; verified stored weekly observation used'
+                                if e == 'Historical Trending: unavailable (expected for retrospective manual run)' else e
+                                for e in collector.errors]
+                        observation_diagnostics = observation_counts(candidates)
+                        logger.info('%s',format_observation_diagnostics(observation_diagnostics))
                     metric_candidates = [candidate for index, candidate in enumerate(candidates)
                                          if index < rules.CANDIDATE_METRIC_LIMIT or candidate.critical]
                     collect_metrics_batch(metric_candidates, self.github, period)
@@ -118,6 +153,8 @@ class ReportPipeline:
                             candidate.metrics['releases_checked'] = Metric(source='candidate metric shortlist budget')
                     validate_candidate(candidate,period)
                     score_candidate(candidate)
+                    if candidate.observation.get('enabled'):
+                        candidate.score.details['observation'] = candidate.observation
                     if not candidate.validation_reasons:
                         allow_repeat(candidate,period)
             finally:
@@ -135,12 +172,15 @@ class ReportPipeline:
                 (Path(output)/'candidate_diagnostics.json').write_text(
                     json.dumps(diagnostic,ensure_ascii=False,indent=2),encoding='utf-8')
                 error.diagnostics = diagnostic
+                error.observation_diagnostics = observation_diagnostics
                 failure_diagnostics = candidate_diagnostic_summary(diagnostic)
                 logger.error('%s',format_candidate_diagnostics(diagnostic))
                 raise
             if structure_only:
                 result = {'run_id':run_id,'top':[c.repository.full_name for c in top],
                           'scores':[c.score.to_dict() for c in top],'candidate_count':len(candidates)}
+                if observation_diagnostics is not None:
+                    result['observation_diagnostics'] = observation_diagnostics
                 (Path(output)/'selection.json').write_text(dumps(result),encoding='utf-8')
                 db.finish_run(run_id,'SUCCESS',result)
                 return result
@@ -177,6 +217,8 @@ class ReportPipeline:
                       'transmissions':json.loads(dumps(results)),'output':str(output)}
             if integration_fixture:
                 result['integration_fixture'] = integration_fixture.summary()
+            if observation_diagnostics is not None:
+                result['observation_diagnostics'] = observation_diagnostics
             db.finish_run(run_id,status,result)
             logger.info('Run %s: %s, candidates=%s, messages=%s',run_id,status,len(candidates),len(messages))
             return result
@@ -188,8 +230,11 @@ class ReportPipeline:
             except Exception as storage_error:
                 logger.error('Observation recovery failed: %s',type(storage_error).__name__)
             try:
+                failure_report = {}
+                if failure_diagnostics: failure_report['candidate_diagnostics'] = failure_diagnostics
+                if observation_diagnostics is not None: failure_report['observation_diagnostics'] = observation_diagnostics
                 db.finish_run(run_id,'FAILED',
-                    report={'candidate_diagnostics':failure_diagnostics} if failure_diagnostics else None,
+                    report=failure_report or None,
                     error=f'{type(error).__name__}: report not completed; see diagnostics')
             except Exception as storage_error:
                 logger.error('Failed status could not be stored: %s',type(storage_error).__name__)

@@ -1,6 +1,6 @@
 # 경량 관측 시스템 상세 설계 v1 — 2026-10-27
 
-상태: **Phase 1~4 및5A 구현·오프라인 검증 완료, production 미연결**. Pool Builder, 관측 모델/검증기, R2 Store, Boundary Job, 읽기 전용 Consumer를 구현했다. Phase5B Pipeline/Runner 연동, Phase6 관측 E2E, Phase7 배포는 미구현이다. 12~15절에서 단계별 구현을 구분한다. 실제 API, 운영 DB, schema migration, Claim, 과거 run, Telegram, Workflow 배포/dispatch는 다루지 않는다. 기존 점수표/MIN_SIGNALS=2/Critical 예외/3600초 허용 범위는 유지한다.
+상태: **Phase 1~5B 코드 구현·오프라인 검증 완료, 실제 운영 실행·배포 미수행**. Consumer를 기본 Production factory/Pipeline에 연결했다. Phase6 관측 Job→Consumer 전체 E2E, Phase7 관측 Workflow/배포는 미구현이다. 12~16절에서 단계별 구현을 구분하며 최신 연결 계약은16절이다. 실제 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 기존 점수표/MIN_SIGNALS=2/Critical 예외/3600초 허용 범위는 유지한다.
 
 ## 1. 확인한 현재 구조
 
@@ -389,6 +389,8 @@ Phase5에서 구현할 것은 관측 소비/선택/두 경계 비교/평가 meta
 
 ## 15. Phase5A Consumer 구현 계약 — 2026-10-31
 
+이 절은5A 완료 당시의 계약/미연결 기록이다. 5B의 실제 연결과 필요한 최소 확장은16절에 기록한다.
+
 이 절은 이전 단계의 Phase5 미구현 안내를 대체한다. 저장 관측의 읽기/검증/선택만 완료했고 **Phase5B 운영 연결은 하지 않았다**. 추가 파일은 services/observation_consumer.py, models/observation_context.py, tests/test_observation_consumer.py다. 기존 Store/Job/History/Metric/Scoring/Ranking/Runner/Pipeline/Workflow/DB/R2 Persistence는 변경하지 않았다.
 
 ### Public interface 및 불변 결과
@@ -454,3 +456,70 @@ Context에는 signals/evidence_sources를 생성하는 기능이 없다. 단순 
 Phase5A에는 위 파일을 수정하지 않았다. Phase6 Consumer E2E와 Phase7 관측 Workflow/실제 배포도 미진행이다.
 
 Phase5A 검증 결과: 신규 Consumer52개(0.63초), Phase1~5A/기존R2/Claim/History 관련322개(7.75초), 전체646개(9.70초) 통과. Python compileall/git diff --check 통과. 소비 테스트는 socket 연결을 차단하고 FakeS3/Synthetic Observation/가상 cutoff/Legacy DTO만 사용했다. 운영 DB/실제 R2 객체에는 접근하지 않았고 기존 Workflow/Pipeline/Runner/SQLite/R2 DB Persistence/Claim/History/Metric/점수표/Evidence/Ranking/Telegram의 diff는0이다. 기존 working tree 보존, Commit/Push/Dispatch 없음.
+
+## 16. Phase5B Production 연결 계약 — 2026-10-31
+
+### 실제 연결 순서와 Claim 보호
+
+기존 run_weekly_live_once의 설정/운영 R2 restore/Claim 사전 검사/finalize/integrity/upload 및 종료 코드는 유지한다. 기본 production_pipeline factory가 ReportPipeline에 lazy production_observation_loader(settings)를 주입한다. loader 생성 시 SDK client/R2 List/GET은 발생하지 않는다.
+
+Pipeline은 기존 atomic claim_live_run을 가장 먼저 성공시킨 뒤 discovery와 attach_history를 수행한다. 그 직후 고정 UTC cutoff를 잡고, 읽어 둔 Legacy row를 Consumer에 전달하여 한 번 조회한다. 이후 numeric ID로 발견 후보에만 결과를 적용한 뒤 기존 metrics/validation/score/select_top/deep analysis/narrative/formatter/splitter/send/persist_week를 실행한다. 이 순서는 Legacy 및 최신 metadata 확보가 필요해서 권장 흐름의 Consumer 위치를 discovery/history 뒤로 둔 최소 조정이다.
+
+사전 Claim 또는 atomic Claim이 막히면 Consumer/관측 List/GET이 없다. Claim 실패/기존 SUCCESS/FAILED/RUNNING/PARTIAL_SUCCESS의 종료·보존 정책은 불변이다. 관측 실패는 별도 DB restore/Claim 변경/강제 재실행을 유발하지 않는다. 직접 생성한 Pipeline은 loader가 없으면 기존 경로를 유지한다. loader가 주입돼도 dry-run/preview/integration-test에서는 호출하지 않으며 fixture 주입과 live mode 혼합은 기존처럼 금지한다.
+
+### 평가 데이터와 최신 데이터
+
+Candidate에 latest_repository/latest_observed_at/observation을 추가했다. 기존 repository는 관측 연결 시 평가용 copy이며, 최신 metadata를 deepcopy하여 별도로 보존한다. JSON 직렬화는 이전 artifact도 읽고 새 latest Repository도 모델로 복원한다.
+
+| 용도 | 사용하는 값 |
+|---|---|
+| Star T/derive_signals/score_candidate | 같은 ID의 검증된 current boundary Star/Fork 및 비교 Metric |
+| age | boundary metadata가 있으면 그 created_at, 없으면 기존 GitHub created_at(관측시각 대체 금지) |
+| relevance/category/API 접근 이름·URL | 기존 discovery 판정 및 현재 canonical 경로 유지; 관측으로 관련성/우선순위 승격 없음 |
+| 신규 탐색 priority | 기존 의미대로 latest Star/created_at 기반 discovery-only 지표 유지 |
+| Issue/PR/Release/Security/Discussion | 기존 조회/예산/독립 근거 판정 유지 |
+| SQLite Repository/Snapshot/Watchlist/history Repository | 실제 discovery 최신 Repository와 실제 배치 완료시각 |
+| Telegram | 현재 Star/최신 Fork와 평가 기준 Star/Fork·각 관측시각을 구분 |
+
+예: previous1000/current1200/latest1500은 delta200/growth20%, T의 규모는1200이다. 기존 score 함수는 수정하지 않는다. metrics.calculate_metrics는 관측 연결 시 이미 검증된 Fork delta/growth를 Legacy/최신 혼합으로 다시 덮지 않는다. 그 외 계산은 기존대로다. Unknown 경계값을 latest로 채우지 않는다. 현재 경계가 없으면 평가 Star/Fork=None이지만 실제 latest1500은 저장·표시하며, 활동/공식 사건 등 나머지 신호로 계속 평가한다.
+
+최신 metadata 시각은 기존 collector가 제공하는 discovery **배치 실제 완료시각**이다. 개별 API 응답 정밀도라고 주장하지 않고, Consumer의 개별 request/response와 별도로 남긴다. 이전 DB row의 measured_at을 보정/삭제하지 않는다. 새 관측 원본은 append-only R2 객체에 유지하며 SQLite로 import하지 않는다.
+
+### Consumer/Legacy 우선순위와 실패
+
+기존5A의 기본 earliest 정책은 유지한다. 이번 요청의 Observation 우선→유효 Legacy fallback을 위해 Consumer에 선택적 prefer_object_snapshots=False 인자를 추가했다. Production loader만 True를 전달한다. 검증/모든 동시각 충돌 검사를 먼저 끝내고, 유효 객체가 있으면 그 집합의 earliest를 선택하며 없으면 유효 Legacy 중 earliest다. 동시각 Legacy/객체 충돌을 우선순위로 숨기지 않는다. 이를 제외한 validator/List/GET/hash/cutoff/페이지/불완전 집합 fail-closed 계약은 바꾸지 않았다.
+
+history_service는 기존 report history/이전 score/watchlist/원본 Snapshot을 읽는다. 읽은 Legacy DTO만 Consumer에 전달하고, 별도 실제 request_started_at이 없다면 LEGACY_REQUEST_TIME_MISSING으로 제외한다. Legacy 행에 현재 시각이나 measured_at을 요청 시작으로 주입하지 않는다. Consumer는 운영 DB를 열지 않는다.
+
+반환 context의 production namespace/기간/cutoff/ID 중복/하위 snapshot ID·경계를 확인한다. 다른 이름이 같아도 ID가 다르면 매칭하지 않는다. fixture/wrong-period/wrong-ID context는 optional source unavailable로 거부한다. R2 접근·손상·SHA·source 오류는5A의 안전한 진단과 전체 집합 배제를 유지한다. loader 예외는 고정 category/HTTP만 기록하며 임의 예외 문자열을 출력하지 않는다. 운영 DB restore/Claim/integrity 같은 기존 치명적 오류는 여전히 기존 종료 정책을 따른다.
+
+### Evidence/출력/Persistence
+
+관측 파일/Pool/context를 signals에 추가하지 않는다. star delta/growth는 기존 star 하나이며 rank가 유효할 때 기존 trending 하나만 적용한다. 기존 MIN_SIGNALS=2/Critical/score/ranking/repeat 규칙과 discovery/shortlist 순서·예산은 변경하지 않았다. 관측 Inventory 중 discovery에서 발견되지 않은 ID는 후보에 추가하지 않는다.
+
+structure_evidence에는 평가 Star/Fork의 basis/observed_at 및 latest 값·시각 metadata만 추가한다. Fact/opinion/actor/quote/impact validation과 prompts는 불변이다. 실제 OpenAI 출력 품질·token 변화는 이번 Mock만으로 실증하지 않았다. 저장된 rolling Trending이 유효한 경우 reliability의 live-page 부재와 저장 관측 사용을 구분하며, 정확히19:00 상태라고 표시하지 않는다. 기존 funnel의 historical_trending_unavailable은 live discovery 미사용 의미를 유지하고 저장 Trending 확인 수는 새 집계에서 구분한다.
+
+Persistence는 latest_repository를 사용해 repositories/weekly_snapshots를 저장하고 최신 metadata를 report history/watchlist에도 유지한다. weekly_metrics에는 평가 Metric/score와 safe observation provenance를 기존 JSON 안에 보존한다. history에는 새 observation metadata를 넣되 기존 row를 갱신하지 않는다. schema/7개 테이블은 그대로다. 성공/실패 recovery 모두 실제 최신값을 저장하며 경계1200을23시 측정값으로 저장하지 않는다.
+
+Formatter 레이아웃은 유지하고 관측 연결 항목에 최신 Fork/최신 metadata 관측시각/평가 기준 Star·Fork/Trending 실제 관측시각만 덧붙인다. Sender/Splitter/retry 코드는 불변이며 메시지 길이 처리는 기존 splitter가 담당한다. artifact replay에서도 두 값 분리가 유지된다.
+
+### 별도 Candidate diagnostics
+
+기존 candidate funnel/exclusion/data-gap 집계는 변경하지 않는다. 다음9개를 candidate 단위로 별도 집계한다:
+
+- observation_context_loaded: numeric ID가 context에서 매칭된 후보 수
+- observation_context_missing: 매칭된 context가 없는 후보 수(접근 실패는 unavailable에도 집계)
+- current_boundary_confirmed / previous_boundary_confirmed
+- star_comparison_confirmed / trending_confirmed
+- observation_conflicted / observation_unavailable
+- legacy_snapshot_used: current 또는 previous에 검증된 Legacy가 선택된 후보 수
+
+성공/부분 성공 result와 실패 automation_runs.report에 같은 observation_diagnostics를 보관한다. InsufficientCandidates에는 exception metadata로 전달하고 Runner는 allowlist로 검증한 같은9개 값을 콘솔에 출력한다. 개별 provenance와 safe category는 candidate artifact 및 score/history JSON에 남긴다. 원본 응답/Secret은 남기지 않는다.
+
+### 미구현 및 운영 게이트
+
+이번 단계는 code wiring과 Mock component/regression 검증이다. 관측 Job→R2 publication→Consumer→report의 별도 Phase6 전체 E2E는 아직 구현/완료 처리하지 않는다. Phase7 관측 Workflow/Pool 발행 운영 주체/권한/실제 SDK·R2 호환성/실행 시간·token·Telegram 운영 실증·배포는 미진행이다. 기존 정규 Workflow에는 손대지 않았다. 새 코드가 실제 배포되면 기본 production factory는 관측 R2 읽기를 시도하므로 배포 전 이 후속 게이트와 관측 객체 확보 상태를 확인해야 한다.
+
+이번 작업은 실제 GitHub/R2/OpenAI/Telegram에 접속하지 않고 임시 SQLite/FakeS3/MockTransport만 사용했다. 실제 운영 DB/과거 FAILED Claim/보고 이력 변경, 과거 재실행, Workflow 수정·Dispatch, Commit/Push는 수행하지 않는다.
+
+Phase5B 검증 결과: 신규 연결43개, Consumer52개 유지, 연결·기존 Pipeline/History/Scoring/Validation/Ranking/Scheduler/R2/Weekly Runner 관련402개(13.29초), 최종 전체689개(15.39초) 통과. Python compileall/git diff --check 통과. 기존 Workflow/SQLite schema/DB Claim/R2 DB Persistence/score/validation/ranking/critical/duplicate/Scheduler/Sender/Splitter 파일 diff=0이다. Evidence 서비스에는 basis/latest metadata만 추가하고 validation 규칙은 바꾸지 않았다. 기존5A의 미연결 AST 테스트는 이제 정책 함수가 Consumer를 직접 import하지 않는지 검사하도록 명칭/범위를 갱신했고, Claim 이후 lazy 호출 및 non-live 미호출은 새 연결 테스트에서 검증한다. 실제 API/운영 DB/배포/과거 Claim 재실행/Commit/Push/Dispatch는 수행하지 않았다.

@@ -393,10 +393,11 @@ def test_kst_period_representation_same_utc_boundary(tmp_path):
     assert ctx.for_repository(ID).comparison.star_delta.value == 200
 
 
-def test_existing_pipeline_runner_and_scoring_not_connected():
+def test_scoring_validation_ranking_do_not_import_consumer():
     import ast
     from pathlib import Path
-    for name in ('services/pipeline.py','services/weekly_live_runner.py','services/score_service.py',
+    # Phase5B connects Pipeline/Runner through an adapter; policy functions stay pure.
+    for name in ('services/score_service.py',
                  'services/validation_service.py','services/ranking_service.py'):
         tree = ast.parse(Path(name).read_text(encoding='utf-8-sig'))
         for node in ast.walk(tree):

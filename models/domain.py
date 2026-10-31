@@ -99,6 +99,10 @@ class Candidate:
     selection_reasons: list[str] = field(default_factory=list)
     evidence: dict = field(default_factory=dict)
     narrative: dict = field(default_factory=dict)
+    # Evaluation boundary sample and the actual latest sample remain separate.
+    latest_repository: Repository | None = None
+    latest_observed_at: str | None = None
+    observation: dict = field(default_factory=dict)
 
     def metric(self, name):
         return self.metrics.get(name, Metric())

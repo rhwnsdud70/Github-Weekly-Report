@@ -1,18 +1,20 @@
 # 구현 상태
 
-- 마지막으로 완료된 Phase: 관측 Phase 5A Observation Consumer 및 오프라인 검증
-- 현재 진행 중인 Phase: Phase 1~4 및5A 완료, production 미연결. Phase 5B Pipeline/Runner 연결의 별도 요청 대기; Phase 5B~7 미구현·미배포.
-- 완료된 기능: Phase 1~25, 기존 E2E/R2/Production One-shot/19:07 요청 Workflow·19:00 보고 경계, 후보 부족·지연 진단, 관측 Phase1 Pool/Phase2 모델·검증/Phase3 JSON Store/Phase4 Job·Mock CLI/Phase5A 읽기 전용 Consumer·불변 Context·Legacy adapter(운영 미연결)
-- 아직 구현하지 않은 기능: Phase 5B Pipeline/Runner/Formatter/Persistence adapter, Phase 6 관측 전체 E2E, Phase 7 Workflow/배포·운영 실증. Phase 5A 범위 TODO 없음. 실제 API 활성화 옵션/관측 Workflow/Pool 발행 운영 주체 없음.
-- 현재 실패 중인 테스트: 없음. 신규 Consumer52개, Phase1~5A+기존R2/Claim/History 관련322개, 전체646개 통과. 기존 운영 객체/Claim/SQLite에는 접근하지 않음.
-- 알려진 문제: 실제 R2 conditional PUT/권한/checksum은 미실증. 기존 WeeklySnapshot에는 요청 시작 시각이 없으므로5A에서 LEGACY_REQUEST_TIME_MISSING으로 제외(별도 실측 provenance가 있는 Legacy만 사용). 시각 추정/과거 행 수정 없음. Job deadline은 협력적 제한이며 향후 Workflow timeout10분 필요. Cold Start/Actions 지연은 운영 consumer 미연결 상태에서 해결되지 않음.
-- 다음 작업: 별도 Phase5B 요청 후 Claim 획득 다음에 consumer를 연결하고 평가 boundary metadata/T/표시와 latest persistence를 분리. Legacy metadata 부재 처리와 R2 장애/fixture 격리를 검증. 설계15절 파일별 계획 참조. 서버·권한 실증/배포는 이후 단계. 기존 FAILED claim 재실행/삭제 금지.
+- 마지막으로 완료된 Phase: 관측 Phase 5B Production Pipeline/Runner 코드 연결 및 오프라인 검증
+- 현재 진행 중인 Phase: Phase 1~5B 코드 완료, 실제 운영 실행·배포 미수행. Phase 6 별도 E2E 요청 대기; Phase 6~7 미구현·미배포.
+- 완료된 기능: 기존 Phase1~25/E2E/R2/One-shot/19:07 요청·19:00 보고 경계/지연 진단, 관측 Phase1 Pool/Phase2 모델·검증/Phase3 Store/Phase4 Job/Phase5A Consumer/Phase5B Claim 이후 lazy loader·경계 평가/최신값 분리·저장/표시·진단 연결
+- 아직 구현하지 않은 기능: Phase 6 관측 Job→R2 publication→Consumer→보고서의 별도 전체 E2E, Phase 7 관측 Workflow/Pool 발행 운영 경로·배포·실제 API 실증. Phase 5B 범위 TODO 없음. 수동 직접 생성 Pipeline/기존 integration 경로는 loader 미주입 시 기존 동작 유지.
+- 현재 실패 중인 테스트: 없음. 신규5B 연결43개, 관련402개, 전체689개 통과. 기존 운영 객체/Claim/SQLite에는 접근하지 않음.
+- 알려진 문제: 실제 R2/SDK/권한/checksum 호환성·실제 LLM 품질/token 변화는 미실증. 기존 WeeklySnapshot에 실제 요청 시작 시각이 없으면 Legacy 비교에서 제외하며 추정하지 않음. Job deadline은 협력적 제한. 코드 배포 시 기본 production factory는 관측 R2 읽기를 시도하므로 Phase6/7 및 관측 객체 확보 상태를 먼저 확인해야 함. Producer 미배포/Cold Start를 코드 연결만으로 해결했다고 주장하지 않음.
+- 다음 작업: 별도 Phase6 요청 후 실제 관측 Job이 만든 두 boundary 객체를 같은 FakeS3에 게시해 R2 restore/Claim→Consumer→평가/최신 저장·표시까지 전체 provenance E2E를 구성. 누락/부분 실패/동시각 충돌/업로드 실패/재실행 차단을 검증. 실제 서버·권한·관측 Workflow 배포는 Phase7. 기존 FAILED claim 재실행/삭제 금지.
 - 실행 방법: `.github/workflows/weekly-report.yml`의 `cron: "7 19 * * 0"`, `timezone: "Asia/Seoul"`; 보고 기간은 기존 report_period()의 일요일19:00 경계/168시간 반개방. schedule→기존 One-shot, 수동 validate/production 유지. Codex에서는 배포/실행하지 않으며 별도 Scheduler 동시 운영 금지.
 - 관측 Job 실행 방법: `python scripts/run_boundary_observation_once.py`는 DISABLED(외부 호출 없음). `python scripts/run_boundary_observation_once.py --mock`은 synthetic fixture와 메모리 HTTP/S3만 사용하며 Secret/.env를 읽지 않는다. production 옵션은 없다.
-- Consumer 실행 방법: Python에서 새 report_read Store와 UTC cutoff/ReportPeriod를 주입해 `consume_observations(...)` 호출. Production 실행 진입점은 없음. 운영 DB는 열지 않으며 detached LegacySnapshot/LatestMetadata 입력만 받음. 상세 Public Interface는 OBSERVATION_ARCHITECTURE.md 15절 참조.
-- 테스트 방법: `python -m pytest tests/test_observation_consumer.py -q` **52 passed in 0.63s**. Phase1~5A+기존R2/Claim/History **322 passed in 7.75s**, 최종 전체 `python -m pytest -q` **646 passed in 9.70s**. compile/diff check 및 보호 파일 diff=0. 실제 API/운영 DB/배포/dispatch/Commit/Push 없음.
+- Consumer 실행 방법: 기본 production_pipeline factory가 lazy loader를 주입하고 Pipeline의 atomic Claim→discovery/history 이후 한 번 실행. 직접 호출 시 report_read Store/UTC cutoff/ReportPeriod 주입. Consumer는 DB를 열지 않고 Legacy DTO만 사용. Production은 prefer_object_snapshots=True, 기존5A 기본 earliest 정책은 유지. dry-run/preview/integration-test는 loader 호출 없음. 설계15~16절 참조.
+- 테스트 방법: `python -m pytest tests/test_observation_pipeline.py -q` 신규43건 포함 관련회귀 통과. 상세 연결/R2/Claim/History/Scoring/Evidence 경로 관련 **402 passed in 13.29s**, 최종 `python -m pytest -q` **689 passed in 15.39s**. Python compileall/git diff --check 통과(CRLF 안내만 있음). Workflow/DB schema/R2 DB Persistence/Claim/점수표/Ranking/Validation/Critical/Scheduler/Sender/Splitter 파일 diff=0. 실제 API/운영 DB/배포/dispatch/Commit/Push 없음.
 
 ## Phase 검증 기록
+
+- 관측 Phase 5B (2026-10-31): services/observation_pipeline.py 및 tests/test_observation_pipeline.py 추가. 기존 Pipeline/Runner에 Claim 이후 lazy Consumer를 연결하고 numeric ID 적용·namespace/기간/cutoff/ID 검증·optional 실패 unknown 처리. Candidate.latest_repository/latest_observed_at/observation 및 artifact 역직렬화, 경계 평가 Star/Fork/T와 최신 metadata의 표시·persistence 분리. metrics의 Fork 덮어쓰기 방지 및 discovery-only priority 최신값 의미 유지. Consumer 기본정책 불변인 prefer_object_snapshots 옵션으로 Production 객체 우선/유효 Legacy fallback(충돌 선검사) 구현. 기본 Workflow/Scheduler/DB schema/Claim/Scoring/Ranking/Evidence 최소기준/Critical/Sender/Splitter 불변. 콘솔과 automation_runs.report에 동일9개 observation_diagnostics를 별도 기록, Source metadata만 Evidence에 추가하고 quote/actor/impact 검증 및 prompts 불변. 신규43/관련402/전체689 통과, compile/diff 통과. 최초 새 테스트의10개 관측=10개 discovery 가정은 잘못된 Fixture 가정으로 확인돼 실제8개 discovery를 검증하도록 수정(관측만 있는2개는 후보에 추가하지 않음); 기존 회귀 실패 없음. 실제 API/운영 DB/기존 Claim/배포/Commit/Push/Dispatch 없음. 다음: 별도Phase6 전체 관측 E2E. 상세변경/미구현은 설계16절 및 README 참조.
 
 - 관측 Phase 5A (2026-10-31): services/observation_consumer.py, models/observation_context.py, tests/test_observation_consumer.py 추가. fresh report_read Store/cutoff를 고정하고 current/previous List2+GET최대16(18/54)만 사용. schema/namespace/source/SHA/실제 양 시각 재검증, earliest response→request→ID→key 선택, 동시각 Star/Fork/metadata 및 Legacy 충돌 보존, 페이지 전체 Trending/확정 ID만 rank 제공. missing/invalid/time/conflict/unavailable 구분, R2 읽기 일부 실패는 실행 전체 관측 배제 및 Legacy 대체 금지. 경계1200/이전1000/최신1500을 delta200/20%와 latest1500으로 분리. 불변 결과·비교·출처·관측 간격·읽기 coverage/선택 summary 제공. 기존 WeeklySnapshot 순수 adapter는 없는 request 시각을 만들지 않고 제외 사유 기록. 신규52/관련322/전체646 통과, compile/diff 통과. 기존 Workflow/Pipeline/Runner/DB/R2 Persistence/History/Metric/Scoring/Evidence/Ranking/Telegram 불변. 실제 API/운영 DB/Claim 접근/Commit/Push/Dispatch 없음. 다음 Phase5B는 미구현이며 설계15절에 파일별 연결 계약을 기록.
 

@@ -347,3 +347,15 @@ Release와 정책 판정은 공식 버전·명시된 문서 헤더·작성자 �
 심층 분석은 TOP 5만 수행합니다. 프로젝트당 Issue 3개, Discussion 2개, PR 2개, Release 2개로 제한하고 원문 길이·총량도 제한합니다. 일부 댓글이나 문서는 수집 범위 밖일 수 있습니다. 의견 출처와 인용은 검증하지만 요약의 의미적 정확성을 완전히 자동 보증하지는 않습니다. 실제 API 설정 후 초기 3~4주간 후보 품질·반복 소개·서술 근거·Telegram 길이를 확인하세요.
 
 참고 API 문서: [GitHub 공개 Advisory](https://docs.github.com/en/rest/security-advisories/global-advisories), [GitHub Discussions](https://docs.github.com/en/graphql/guides/using-the-graphql-api-for-discussions), [OpenAI 구조화 출력](https://developers.openai.com/api/docs/guides/structured-outputs), [Telegram Bot API](https://core.telegram.org/bots/api#sendmessage).
+
+## 저장 관측값의 Production 연결 — Phase 5B
+
+기본 Production factory에 읽기 전용 Observation Consumer를 코드상 연결했습니다. 이번 단계에서는 실제 실행·배포를 수행하지 않았으며 관측 Workflow와 Pool 발행 운영 경로는 아직 없습니다. 원자적 주차 Claim 획득 후 discovery/history 조회를 마친 뒤 Consumer를 한 번 실행합니다. 기존 Claim이면 관측 R2 List/GET도 수행하지 않습니다. 직접 생성한 Pipeline은 loader 주입이 없으면 기존 경로를 유지하며 dry-run/preview/integration-test에서는 주입된 loader도 실행하지 않습니다.
+
+Scoring의 규모별 T와 Star/Fork 증가량은 검증된 경계 관측값을 사용합니다. 이전1000/경계1200/최신1500이면 delta200·growth20%이며 최신1500과 실제 discovery 배치 완료시각은 별도 보존합니다. Telegram에는 최신값과 평가 기준값·관측시각을 구분해 표시하고 SQLite Snapshot/Repository/Watchlist에는 최신값을 저장합니다. 경계 원본은 R2 append-only 객체에 남습니다.
+
+관측 객체 우선, 유효 Legacy fallback 순서이며 동시각 충돌은 먼저 차단합니다. 기존 SQLite 행에 요청 시작 시각이 없으면 추정하지 않고 Legacy 비교에서 제외합니다. 관측 누락/손상/R2 접근 실패는 해당 평가 지표를 unknown으로 만들고 다른 실제 신호로 평가를 계속합니다. Evidence 최소2개/Critical 예외/점수표/중복 발송 정책은 유지합니다. 후보 부족 시 TOP5를 채우지 않습니다.
+
+Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observation_diagnostics`에서 current/previous 확인, 비교 가능, Trending, conflict/unavailable, Legacy 사용 집계를 확인합니다. 기존 funnel과 별도 집계입니다. 실제 R2 호환성·관측 Job→Consumer 전체 E2E는 아직 검증하지 않았으며 Phase6/7에서 별도 수행해야 합니다.
+
+오프라인 연결 검증: `python -m pytest tests/test_observation_pipeline.py -q`. 상세 데이터 계약과 후속 단계는 docs/OBSERVATION_ARCHITECTURE.md 16절 및 docs/IMPLEMENTATION_STATUS.md를 참조하세요.

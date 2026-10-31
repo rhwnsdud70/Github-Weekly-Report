@@ -110,9 +110,10 @@ def calculate_metrics(candidate, period):
         sum(previous) if all(x is not None for x in previous) else None, 'combined weekly activity')
     snapshot = (candidate.previous.get('snapshot') or {}) if candidate.previous.get('snapshot_usable',True) else {}
     forks = candidate.repository.forks
-    metrics['fork_delta'] = (Metric.known(forks-snapshot['forks'], 'weekly snapshots')
-        if forks is not None and snapshot.get('forks') is not None else Metric())
-    metrics['fork_growth'] = growth(forks, snapshot.get('forks'), 'weekly snapshots')
+    if not candidate.observation.get('enabled'):
+        metrics['fork_delta'] = (Metric.known(forks-snapshot['forks'], 'weekly snapshots')
+            if forks is not None and snapshot.get('forks') is not None else Metric())
+        metrics['fork_growth'] = growth(forks, snapshot.get('forks'), 'weekly snapshots')
     total = candidate.metric('discussion_total').value
     old_total = snapshot.get('discussion_total')
     discussion_delta = total-old_total if total is not None and old_total is not None else None
@@ -121,7 +122,9 @@ def calculate_metrics(candidate, period):
     if candidate.repository.created_at:
         age = (period.end-instant(candidate.repository.created_at)).total_seconds()/86400
         metrics['age_days'] = Metric.known(max(0, age), 'GitHub created_at')
-        stars = candidate.repository.stars
+        # Discovery-only priority keeps its original latest-metadata meaning;
+        # evaluation T/Star signals continue using the boundary repository.
+        stars = (candidate.latest_repository or candidate.repository).stars
         metrics['new_repository_priority'] = Metric.known(
             stars is not None and any(0 <= age <= days and stars >= threshold for days,threshold in rules.NEW_REPO_THRESHOLDS),
             'GitHub created_at and stars; discovery signal only')

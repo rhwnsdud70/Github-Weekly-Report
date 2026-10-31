@@ -4,6 +4,23 @@ from collections import Counter
 from config import rules
 
 
+OBSERVATION_FIELDS = ('observation_context_loaded','observation_context_missing',
+    'current_boundary_confirmed','previous_boundary_confirmed','star_comparison_confirmed',
+    'trending_confirmed','observation_conflicted','observation_unavailable','legacy_snapshot_used')
+
+
+def observation_diagnostic_summary(value):
+    if not isinstance(value,dict) or any(type(value.get(k)) is not int or value[k] < 0 for k in OBSERVATION_FIELDS):
+        return None
+    return {key:value[key] for key in OBSERVATION_FIELDS}
+
+
+def format_observation_diagnostics(value):
+    summary = observation_diagnostic_summary(value)
+    return ('Observation diagnostics:\n'+'\n'.join(f'- {k}: {v}' for k,v in summary.items())
+            if summary is not None else 'Observation diagnostics: UNAVAILABLE')
+
+
 MAJOR_METRICS = (
     'star_delta', 'star_growth', 'issues', 'pulls', 'trending',
     'releases_checked', 'security_checked',

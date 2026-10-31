@@ -21,6 +21,8 @@ from services.ranking_service import InsufficientCandidates
 from services.candidate_diagnostics import candidate_diagnostic_summary, format_candidate_diagnostics
 from services.scheduler import KST, report_period
 from services.observation_timing import format_observation_timing
+from services.observation_pipeline import production_observation_loader
+from services.candidate_diagnostics import observation_diagnostic_summary, format_observation_diagnostics
 from telegram.sender import TelegramSender
 
 
@@ -40,7 +42,8 @@ def production_pipeline(settings, database, clock):
         github = GitHubClient(settings.github_token,client)
         llm = OpenAIJSONClient(settings.openai_api_key,settings.openai_model,llm_client)
         sender = TelegramSender(settings.telegram_bot_token,settings.telegram_chat_id,client)
-        yield ReportPipeline(database,github,client,llm,sender,clock=clock)
+        yield ReportPipeline(database,github,client,llm,sender,clock=clock,
+                             observation_loader=production_observation_loader(settings))
 
 
 def period_claims(database, period):
@@ -145,6 +148,9 @@ def run_weekly_live_once(settings, *, allow_initial_bootstrap=False, output='art
                     pipeline_status = 'FAILED'
                     emit('Pipeline: FAILED; InsufficientCandidates (handled application failure)')
                     diagnostic = candidate_diagnostic_summary(getattr(error,'diagnostics',None))
+                    observation = observation_diagnostic_summary(getattr(error,'observation_diagnostics',None))
+                    if observation is not None:
+                        emit(format_observation_diagnostics(observation))
                     if diagnostic is not None:
                         emit(format_candidate_diagnostics(diagnostic))
                     else:
@@ -157,6 +163,9 @@ def run_weekly_live_once(settings, *, allow_initial_bootstrap=False, output='art
                                 terminal_claim_confirmed(database,period,pipeline_status,result['run_id']))
                     # Never echo an unvalidated result payload, including arbitrary strings.
                     emit('Pipeline: '+(pipeline_status if terminal else 'INVALID_TERMINAL_STATE'))
+                    observation = observation_diagnostic_summary(result.get('observation_diagnostics'))
+                    if observation is not None:
+                        emit(format_observation_diagnostics(observation))
                 if not terminal:
                     emit('SQLite finalize/integrity: BLOCKED; terminal claim not confirmed')
                     emit('R2 upload: BLOCKED')
