@@ -1,0 +1,19 @@
+{
+  "fixture": true,
+  "purpose": "Design contract only; never a production observation object",
+  "boundary_end": "2026-11-01T19:00:00+09:00",
+  "cases": [
+    {"name":"exact_boundary", "previous":[0,0], "current":[0,0], "report_delay":420, "eligible":true},
+    {"name":"ten_minute_observation", "previous":[590,600], "current":[590,600], "report_delay":1200, "eligible":true},
+    {"name":"exact_tolerance_end", "previous":[3599,3600], "current":[3599,3600], "report_delay":4000, "eligible":true},
+    {"name":"after_tolerance_end", "previous":[0,1], "current":[3600,3601], "report_delay":4000, "eligible":false},
+    {"name":"request_crosses_window", "previous":[0,1], "current":[3540,3660], "report_delay":4000, "eligible":false},
+    {"name":"request_before_boundary", "previous":[0,1], "current":[-1,2], "report_delay":420, "eligible":false},
+    {"name":"new_repository_without_previous", "previous":null, "current":[419,420], "report_delay":600, "eligible":false},
+    {"name":"observation_job_missing", "previous":[0,1], "current":null, "report_delay":14565, "eligible":false},
+    {"name":"late_report_valid_stored_observations", "previous":[419,420], "current":[599,600], "report_delay":14565, "eligible":true},
+    {"name":"late_live_observation", "previous":[419,420], "current":[14564,14565], "report_delay":15000, "eligible":false},
+    {"name":"previous_observation_too_late", "previous":[14564,14565], "current":[419,420], "report_delay":600, "eligible":false},
+    {"name":"observation_not_yet_available_at_cutoff", "previous":[0,1], "current":[599,600], "report_delay":420, "eligible":false}
+  ]
+}
