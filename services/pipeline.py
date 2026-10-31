@@ -42,11 +42,15 @@ def write_output(report, output, banner=None):
 
 
 class ReportPipeline:
-    def __init__(self, database, github, web, llm=None, sender=None, clock=None, observation_loader=None):
+    def __init__(self, database, github, web, llm=None, sender=None, clock=None, observation_loader=None,
+                 observation_validator=validate_pipeline_context):
         self.database, self.github, self.web = database, github, web
         self.llm, self.sender = llm, sender
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.observation_loader = observation_loader
+        # Test-only composition can validate a fixture namespace explicitly.
+        # Production factory supplies no override; its strict default is unchanged.
+        self.observation_validator = observation_validator
 
     def run(self, period, mode='dry-run', limit=rules.CANDIDATE_LIMIT, output='artifacts/report',
             structure_only=False, candidate_cache=None, integration_fixture=None):
@@ -118,7 +122,7 @@ class ReportPipeline:
                         load_error = None
                         cutoff = self.clock().astimezone(timezone.utc)
                         try:
-                            context = validate_pipeline_context(self.observation_loader(
+                            context = self.observation_validator(self.observation_loader(
                                 period,cutoff,legacy_inputs(candidates,period)),period,cutoff)
                             unavailable = any(d.category == 'OBSERVATION_STORE_UNAVAILABLE' for d in context.diagnostics)
                         except Exception as observation_error:

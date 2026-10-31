@@ -1,6 +1,6 @@
 # 경량 관측 시스템 상세 설계 v1 — 2026-10-27
 
-상태: **Phase 1~5B 코드 구현·오프라인 검증 완료, 실제 운영 실행·배포 미수행**. Consumer를 기본 Production factory/Pipeline에 연결했다. Phase6 관측 Job→Consumer 전체 E2E, Phase7 관측 Workflow/배포는 미구현이다. 12~16절에서 단계별 구현을 구분하며 최신 연결 계약은16절이다. 실제 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 기존 점수표/MIN_SIGNALS=2/Critical 예외/3600초 허용 범위는 유지한다.
+상태: **Phase 1~6 코드·Mock E2E 검증 완료, 실제 운영 실행·배포 미수행**. Producer가 게시한 두 경계 객체를 Consumer가 다시 읽고 주간 Runner의 restore/Claim/TOP5/report/send/persistence/upload까지 연결했다. Phase7 관측 Workflow/배포·실제 API 실증은 미완료다. 12~17절에 단계별 구현을 구분하며 최신 검증 계약은17절이다. 실제 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
 
 ## 1. 확인한 현재 구조
 
@@ -459,6 +459,8 @@ Phase5A 검증 결과: 신규 Consumer52개(0.63초), Phase1~5A/기존R2/Claim/H
 
 ## 16. Phase5B Production 연결 계약 — 2026-10-31
 
+이 절의 Phase6 미구현 안내는5B 완료 당시 기록이다. 이후 Phase6 Mock E2E 결과는17절에 기록한다.
+
 ### 실제 연결 순서와 Claim 보호
 
 기존 run_weekly_live_once의 설정/운영 R2 restore/Claim 사전 검사/finalize/integrity/upload 및 종료 코드는 유지한다. 기본 production_pipeline factory가 ReportPipeline에 lazy production_observation_loader(settings)를 주입한다. loader 생성 시 SDK client/R2 List/GET은 발생하지 않는다.
@@ -523,3 +525,68 @@ Formatter 레이아웃은 유지하고 관측 연결 항목에 최신 Fork/최�
 이번 작업은 실제 GitHub/R2/OpenAI/Telegram에 접속하지 않고 임시 SQLite/FakeS3/MockTransport만 사용했다. 실제 운영 DB/과거 FAILED Claim/보고 이력 변경, 과거 재실행, Workflow 수정·Dispatch, Commit/Push는 수행하지 않는다.
 
 Phase5B 검증 결과: 신규 연결43개, Consumer52개 유지, 연결·기존 Pipeline/History/Scoring/Validation/Ranking/Scheduler/R2/Weekly Runner 관련402개(13.29초), 최종 전체689개(15.39초) 통과. Python compileall/git diff --check 통과. 기존 Workflow/SQLite schema/DB Claim/R2 DB Persistence/score/validation/ranking/critical/duplicate/Scheduler/Sender/Splitter 파일 diff=0이다. Evidence 서비스에는 basis/latest metadata만 추가하고 validation 규칙은 바꾸지 않았다. 기존5A의 미연결 AST 테스트는 이제 정책 함수가 Consumer를 직접 import하지 않는지 검사하도록 명칭/범위를 갱신했고, Claim 이후 lazy 호출 및 non-live 미호출은 새 연결 테스트에서 검증한다. 실제 API/운영 DB/배포/과거 Claim 재실행/Commit/Push/Dispatch는 수행하지 않았다.
+
+## 17. Phase6 Observation 전체 Mock E2E — 2026-10-31
+
+### 실제 실행 경로
+
+추가 파일은 tests/observation_e2e_support.py와 tests/test_observation_e2e.py다. 기존 DemoBackend/ObservationS3/FakeS3/VirtualClock/live_settings를 재사용하되 수작업 Observation JSON이나 예상 Context를 Pipeline에 넣지 않는다.
+
+`build_pool → seal_pool → R2ObservationStore.publish_pool → run_boundary_observation(ObservationGitHub/GitHubClient/collect_trending) → conditional PUT/verification GET → 저장 bytes → consume_observations → Claim된 ReportPipeline → Evidence/Scoring/TOP5/Deep Analysis/Narrative/Formatter/Splitter/TelegramSender → persist_week → checkpoint/integrity/export → R2DatabaseStore.upload`
+
+두 경계의 Job이 각각 metadata REST와 실제 Trending parser를 실행한다. HTTP 응답만 MockTransport로 제공하고 Job이 만든 모델을 validator/canonical JSON/SHA 계약에 따라 Store가 게시한다. Consumer는 같은 메모리 버킷의 SDK GET Body를 읽는다. 성공 테스트는 게시 후 Job 결과 참조를 지워도 Consumer가 값·시각·object key/SHA를 복구하는지 검증한다. Producer 반환값을 Consumer 입력으로 쓰지 않는다.
+
+운영 주간 구간은 실제 run_weekly_live_once를 통해 실행한다. 기존 offline 설정 검증→Fake R2 운영 DB restore→Claim 사전/원자적 검사→discovery/history→Consumer→평가/선정→TOP5만 분석/Mock 전송→SQLite 확정/검증/연결 종료→R2 백업/업로드를 사용한다. 두 R2 client는 같은 메모리 objects dictionary를 공유하여 namespace 분리 검사가 단순히 별도 버킷을 사용한 결과가 아니도록 한다.
+
+### Synthetic namespace와 최소 주입 확장
+
+모든 관측/Pool payload는 fixture=True이고 test-observations/v1/ 및 test-observation-pools/v1/에만 게시한다. 실제 Production namespace로 바꾸거나 fixture=False로 위장하지 않는다. 관측 client는 production/·backups/뿐 아니라 production 관측 prefix도 거부한다. Fake DB client만 메모리의 production/github_weekly_report.db와 backups/를 취급한다. 이는 운영 객체가 아니라 pytest 임시 DB의 bytes다.
+
+기존 Production Context 검증기가 fixture를 거부하므로 전체 테스트 합성에는 최소 DI가 필요했다. ReportPipeline에 observation_validator 선택적 인자(기본 기존 validate_pipeline_context), 해당 함수에 namespace 선택적 인자(기본 production)를 추가했다. 테스트 factory만 namespace=fixture를 명시하고 기존 기간/cutoff/ID 검증을 그대로 실행한다. codec/Producer/Store/Consumer 검증은 모두 실제 fixture 계약으로 실행한다. 실제 Production factory/CLI에는 이 override를 추가하지 않았다. fixture Context를 기본 Production 검증기에 넘기면 계속 FIXTURE_NAMESPACE_MISMATCH이며 해당 지표는 unknown이다. 테스트 namespace 객체를 Production Store에 게시하려는 시도도 SDK 호출 전에 거부함을 확인한다.
+
+Candidate.observation JSON에 context namespace를 보존하여 fixture 출처가 artifact/score/history에서 사라지지 않게 했다. SQLite Claim mode=live는 임시 Fake 운영 경로의 원자적 Claim/전송 정책을 검증하기 위한 것이며 실제 운영 DB에 쓰지 않는다. 이 테스트 전용 합성을 실제 배포 옵션으로 노출하지 않는다.
+
+### 검증된 값과 데이터 흐름
+
+| 값 | Previous | Current boundary | Latest discovery | 검증 |
+|---|---:|---:|---:|---|
+| A Stars |1000|1200|1500|delta200/growth20%, 평가 T1200, 저장·표시1500|
+| A Forks |100|150|200|delta50/growth50%, 저장·표시200|
+| B Stars |2000|2300|1500|delta300/growth15%, T2300; latest1500의 T와 점수가 다름을 검증|
+
+가상 시각은 명시적 Synthetic Fixture다. 이전/현재 경계 후19:01부터 metadata 응답마다0.1초를 전진시켜 실제 request/response/duration을 모델에 기록하고 보고서 Runner는23:00에 시작한다. 수집/게시/소비가 Clock을 과거로 소급 보정하지 않는다. 별도23시 지연 Job은 SUCCESS/NONE이며 Window 밖 metadata를 평가에 쓰지 않는다.
+
+Current/Previous missing, latest-only, 감소, previous0 not_applicable, Trending unavailable, 동일 시각 두 Producer의 값 충돌, 동일 객체 GET2회, JSON/hash 손상, 접근 오류, 잘린 목록을 전체 경로에서 검증한다. 느린 PUT acknowledgement가8분 협력 deadline을 넘긴 경우 게시 확인은 UNCONFIRMED이고, payload의 실제19:01 시각은 유지하되23시 cutoff 이후 LastModified 객체는 소비에서 제외한다.
+
+실제 derive_signals/validate_candidate/score_candidate/select_top을 실행한다. 동일 Star의 delta/growth 및 중복 게시만으로 독립 근거가 늘지 않는다. 별도 Mock Release/주간 Issue·PR/Security가 충분하면5개 서로 다른 프로젝트를 선정한다. Star 하나만 있고 활동/공식 사건/Trending이 없거나, 독립 신호가 부족하면 InsufficientCandidates다. Critical 후보는 기존 mandatory inclusion으로 포함한다. Evidence 구조화·actor/quote/impact 검증·Narrative도 실제 코드이며 OpenAI 응답만 Fake이다.
+
+Mock Telegram에는 최신값/평가기준값/실제 관측시각/summary/TOP1~5/alert/watchlist가 생성된다. 기존 paragraph를 늘려 splitter가 length/UTF16 상한을 지키고 같은 TOP part를 연속 배치함을 검증한다. 일부 실패는 최대3attempts 후 다음 항목으로 진행하며 PARTIAL_SUCCESS, 전부 실패는 FAILED다. Schema7개/최신 Snapshot/metrics score/소개 이력/Watchlist/각 전송 로그를 저장하고 integrity/foreign key 검사 및 WAL checkpoint/export 후 독립 DELETE-journal DB를 업로드한다.
+
+### 장애 및 복구 행렬
+
+| 주입 위치 | 결과/보존 정책 |
+|---|---|
+| Pool 생성 | 미래 입력이 실제 Builder에서 FUTURE_DATA로 거부됨; 새 객체 없음; 다른 정상 자료로 주간 처리 가능 |
+| metadata/Trending | 실제 Job의 unavailable/부분 성공/coverage를 보존; 나머지 Source로 계속 평가 |
+| Observation PUT drop/timeout | 실제 Store가 UNCONFIRMED 또는 commit 후 같은 key GET VERIFIED로 구분; 불확실한 게시를 성공 처리하지 않음 |
+| Consumer JSON/SHA/403/network/pagination | 구체 category/OBSERVATION_STORE_UNAVAILABLE 및 unknown 유지; 다른 사건으로 평가 |
+| discovery/Evidence validation/Report 생성의 예외 | local FAILED Claim, 실제 최신값 수집분 복구; 원격 DB 업로드 안 함(기존 unexpected-failure 정책) |
+| 근거 부족 | InsufficientCandidates/FAILED Claim/최신 Snapshot을 정상 finalize 후 원격 DB에 보존; 가짜 보고서/전송 없음 |
+| Telegram 일부/전체 실패 | 기존 retries/log/부분 또는 FAILED 상태 보존; 원격 Claim 기록 후 재실행 차단 |
+| DB restore transport/손상 | RESTORE_FAILED, 주간 클라이언트/관측 조회 없음; 빈 DB fallback 없음 |
+| checkpoint/final integrity | SQLITE_FINALIZE_FAILED, 업로드 안 함; 원격 기존 DB 유지 |
+| DB backup/upload | R2_UPLOAD_FAILED, 기존 원격 DB 유지; upload 실패 시 기존 백업도 보존; remote claim 미확정/중복 발송 위험 표시 |
+
+예상 밖 예외에서 local FAILED가 기록됐다고 remote FAILED까지 보존됐다고 주장하지 않는다. Telegram 성공 뒤 업로드 실패도 완전 성공이 아니다. 자동 재전송/Claim 삭제/원격 롤백/원격 객체 삭제는 없다. Local physical SQLite는 주입한 오류 이후에도 실제 integrity 검사를 통과하는지 확인한다.
+
+처리된 SUCCESS/FAILED/RUNNING/PARTIAL_SUCCESS를 담은 Fake 원격 DB 및 같은 주차 replay는 관측 List/GET·GitHub/OpenAI/Telegram 없이 SKIPPED_ALREADY_CLAIMED다. 재실행은 새 임시 local path로 원격 Claim을 다시 복원하는 새 호스트 상황을 재현하며, 기존 실패 Claim bytes를 수정하지 않는다. Claim 획득 자체가 실패할 때도 관측/API work가 없다.
+
+### 보호·결과·한계
+
+테스트 autouse guard가 socket.connect/create_connection, 실제 httpx.HTTPTransport 생성, R2 SDK factory, Settings.load를 pytest 실패로 차단한다. 실제 .env/Secret은 읽지 않는다. API wrapper 클래스는 실제 Production 코드지만 HTTP와 S3 구현은 Fake/MockTransport다. 모든 파일은 pytest 임시 디렉터리이며 운영 DB/기존 R2 객체/과거 FAILED Claim에 접근하지 않는다. Workflow/Dispatch/Commit/Push 없음.
+
+기능 버그는 이번 E2E에서 확인되지 않았다. E2E 합성을 위한 validator 주입과 namespace audit metadata만 운영 소스에 최소 추가했다. 동일 객체 두 번 GET하는 신규 테스트에서 호출0회로 잘못 기대한 assertion은 실제 GET2회를 확인하도록 수정한 테스트 오류였으며 Production 동작 변경으로 해결하지 않았다.
+
+신규 E2E43개(8.33초), Phase1~6/기존 통합·R2·Runner 관련382개(21.29초), 전체732개(24.35초) 통과. Python compileall/git diff --check 통과. 기존 Workflow/SQLite schema/Claim/R2 DB Persistence/History/Metric/Persistence/Scoring/Evidence/Ranking/Scheduler/Formatter/Sender/Splitter 파일 diff=0이다.
+
+Phase7은 미완료다. 실제 R2 IfNoneMatch/서명/checksum/권한/네트워크 timeout, GitHub/OpenAI/Telegram 실 API, 실제 token usage/서술 품질은 이번 Mock이 증명하지 않는다. Pool 발행 운영 경로/관측 Workflow/스케줄 지연·실행 시간·권한 최소화·초기 실제 관측 확보와 배포 게이트를 별도 작업에서 검증해야 한다. 기본 Production validator는 그대로 production namespace만 기대하며 이번 테스트용 validator override를 운영 설정으로 복사하지 않는다.

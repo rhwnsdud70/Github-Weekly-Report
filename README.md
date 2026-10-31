@@ -356,6 +356,8 @@ Scoring의 규모별 T와 Star/Fork 증가량은 검증된 경계 관측값을 �
 
 관측 객체 우선, 유효 Legacy fallback 순서이며 동시각 충돌은 먼저 차단합니다. 기존 SQLite 행에 요청 시작 시각이 없으면 추정하지 않고 Legacy 비교에서 제외합니다. 관측 누락/손상/R2 접근 실패는 해당 평가 지표를 unknown으로 만들고 다른 실제 신호로 평가를 계속합니다. Evidence 최소2개/Critical 예외/점수표/중복 발송 정책은 유지합니다. 후보 부족 시 TOP5를 채우지 않습니다.
 
-Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observation_diagnostics`에서 current/previous 확인, 비교 가능, Trending, conflict/unavailable, Legacy 사용 집계를 확인합니다. 기존 funnel과 별도 집계입니다. 실제 R2 호환성·관측 Job→Consumer 전체 E2E는 아직 검증하지 않았으며 Phase6/7에서 별도 수행해야 합니다.
+Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observation_diagnostics`에서 current/previous 확인, 비교 가능, Trending, conflict/unavailable, Legacy 사용 집계를 확인합니다. 기존 funnel과 별도 집계입니다. Phase6에서 Producer→공유 Fake R2→Consumer→주간 Runner 전체 Mock E2E를 완료했습니다. 실제 R2 호환성·운영 API/관측 Workflow 배포는 Phase7에서 별도 검증해야 합니다.
 
 오프라인 연결 검증: `python -m pytest tests/test_observation_pipeline.py -q`. 상세 데이터 계약과 후속 단계는 docs/OBSERVATION_ARCHITECTURE.md 16절 및 docs/IMPLEMENTATION_STATUS.md를 참조하세요.
+
+관측 전체 E2E: `python -m pytest tests/test_observation_e2e.py -q` (43개). Pool Builder/Job/Store/Consumer/Pipeline/SQLite/R2 Persistence를 실제 코드로 실행하며 HTTP/S3만 Fake입니다. 관측 객체는 fixture 표시와 test namespace를 유지하고 별도 테스트 factory만 fixture namespace 검증기를 주입합니다. 기본 Production 검증기는 fixture를 계속 거부합니다. 모든 DB는 pytest 임시 디렉터리, 버킷은 공유 메모리 객체이며 socket·실제 HTTP transport·SDK factory·설정 Secret 로딩을 차단합니다. 상세 장애 행렬은 설계17절을 참조하세요. 전체 회귀732개 통과이며 Phase7 배포는 미완료입니다.

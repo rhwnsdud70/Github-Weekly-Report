@@ -36,10 +36,10 @@ def legacy_inputs(candidates, period):
     return tuple(rows)
 
 
-def validate_pipeline_context(context, period, cutoff):
+def validate_pipeline_context(context, period, cutoff, *, namespace='production'):
     if not isinstance(context,ObservationContext):
         raise ObservationConsumerError('INVALID_OBSERVATION_CONTEXT')
-    if context.namespace != 'production':
+    if namespace not in {'production','fixture'} or context.namespace != namespace:
         raise ObservationConsumerError('FIXTURE_NAMESPACE_MISMATCH')
     if (context.period_start != period.start or context.period_end != period.end
             or context.cutoff != cutoff):
@@ -84,6 +84,7 @@ def apply_observation(candidate, context, measured_at, *, unavailable=False, loa
     candidate.metrics['trending_clearly_top'] = Metric()
     candidate.observation = json.loads(dumps({
         'enabled':True,'context_loaded':row is not None,
+        'namespace':context.namespace if context else None,
         'status':'UNAVAILABLE' if unavailable else 'LOADED' if context is not None else 'MISSING',
         'repository':row,'trending':context.trending if context else None,
         'cutoff':context.cutoff if context else None,
