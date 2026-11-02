@@ -361,3 +361,13 @@ Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observ
 오프라인 연결 검증: `python -m pytest tests/test_observation_pipeline.py -q`. 상세 데이터 계약과 후속 단계는 docs/OBSERVATION_ARCHITECTURE.md 16절 및 docs/IMPLEMENTATION_STATUS.md를 참조하세요.
 
 관측 전체 E2E: `python -m pytest tests/test_observation_e2e.py -q` (43개). Pool Builder/Job/Store/Consumer/Pipeline/SQLite/R2 Persistence를 실제 코드로 실행하며 HTTP/S3만 Fake입니다. 관측 객체는 fixture 표시와 test namespace를 유지하고 별도 테스트 factory만 fixture namespace 검증기를 주입합니다. 기본 Production 검증기는 fixture를 계속 거부합니다. 모든 DB는 pytest 임시 디렉터리, 버킷은 공유 메모리 객체이며 socket·실제 HTTP transport·SDK factory·설정 Secret 로딩을 차단합니다. 상세 장애 행렬은 설계17절을 참조하세요. 전체 회귀732개 통과이며 Phase7 배포는 미완료입니다.
+
+## Observation 배포 사전 검사 — Phase 7A
+
+`.github/workflows/observation.yml`의 **Observation System**은 `workflow_dispatch`의 `mode=validate`만 지원합니다. schedule/workflow_run/Production 단계가 없고 기존 Weekly Report와 자동 연계하지 않습니다. 서비스 Secret을 주입하지 않으며 권한은 contents: read, concurrency는 별도 `github-weekly-report-observation`, cancel-in-progress=false/queue=max, Ubuntu/Python3.11/timeout20분입니다. 기존 Weekly Report Workflow는 변경하지 않았습니다.
+
+검사는 dependency 설치 → 구조 검증기 → Observation 테스트 → 전체 pytest → compile → diff 순서이며 실패를 무시하지 않습니다. Summary에는 고정 단계 outcome만 기록하고 DB/로그/Secret Artifact를 업로드하지 않습니다. `.env`/운영 DB/실제 API 없이 모델·설정 필드·인터페이스·기본 규칙·의존성을 확인합니다. **R2 인증·접속·조건부 PUT 호환성이나 실제 Production 설정값을 검증한 결과는 아닙니다.**
+
+로컬 검증: `python scripts/validate_observation_deployment.py`, `python -m pytest tests/test_observation_workflow.py -q`. 기본 브랜치에 사용자가 변경사항을 반영한 뒤 Actions → Observation System → Run workflow → mode=validate를 선택하고 모든 단계와 Summary의 Production NOT EXECUTED를 확인합니다. 이번 작업에서 Commit/Push/Dispatch는 수행하지 않았습니다. Phase7A 실행을 위해 새 Secret을 추가할 필요는 없습니다.
+
+Phase7B~7E는 미구현입니다. Observation 전용 R2 자격증명/Reader·Writer 분리 및 별도 bucket을 우선 검토하고, 기존 Production Secret 이름은 유지합니다. 이 단계에는 아직 해당 Secret 연결이 없습니다. 후속 구조·권한·실증·배포 게이트는 설계18절과 IMPLEMENTATION_STATUS.md를 참조하세요. 최종 전체 pytest750개 통과입니다.

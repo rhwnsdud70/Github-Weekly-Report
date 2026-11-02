@@ -1,6 +1,6 @@
 # 경량 관측 시스템 상세 설계 v1 — 2026-10-27
 
-상태: **Phase 1~6 코드·Mock E2E 검증 완료, 실제 운영 실행·배포 미수행**. Producer가 게시한 두 경계 객체를 Consumer가 다시 읽고 주간 Runner의 restore/Claim/TOP5/report/send/persistence/upload까지 연결했다. Phase7 관측 Workflow/배포·실제 API 실증은 미완료다. 12~17절에 단계별 구현을 구분하며 최신 검증 계약은17절이다. 실제 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
+상태: **Phase 1~6 및7A 구현·오프라인 검증 완료, 실제 운영 실행·배포 미수행**. 관측 전용 수동 validate Workflow와 Secret 없는 구조 검증기를 추가했다. Phase7B~7E(Secret/권한·실제 API 실증·수집·예약/배포)는 미구현이다. 최신 준비 계약은18절, E2E는17절이다. 실제 서비스 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
 
 ## 1. 확인한 현재 구조
 
@@ -590,3 +590,51 @@ Mock Telegram에는 최신값/평가기준값/실제 관측시각/summary/TOP1~5
 신규 E2E43개(8.33초), Phase1~6/기존 통합·R2·Runner 관련382개(21.29초), 전체732개(24.35초) 통과. Python compileall/git diff --check 통과. 기존 Workflow/SQLite schema/Claim/R2 DB Persistence/History/Metric/Persistence/Scoring/Evidence/Ranking/Scheduler/Formatter/Sender/Splitter 파일 diff=0이다.
 
 Phase7은 미완료다. 실제 R2 IfNoneMatch/서명/checksum/권한/네트워크 timeout, GitHub/OpenAI/Telegram 실 API, 실제 token usage/서술 품질은 이번 Mock이 증명하지 않는다. Pool 발행 운영 경로/관측 Workflow/스케줄 지연·실행 시간·권한 최소화·초기 실제 관측 확보와 배포 게이트를 별도 작업에서 검증해야 한다. 기본 Production validator는 그대로 production namespace만 기대하며 이번 테스트용 validator override를 운영 설정으로 복사하지 않는다.
+
+## 18. Phase7A Observation 전용 validate Workflow — 2026-11-02
+
+관측 전용 .github/workflows/observation.yml과 scripts/validate_observation_deployment.py, tests/test_observation_workflow.py를 추가했다. 기존 weekly-report.yml/One-shot Runner/R2 DB Store/SQLite backup·schema/Claim/Report History/Scoring/Evidence/Telegram은 수정하지 않았다. 이 절은 이전 단계의 Phase7 전체 미구현 기록을 세분화하며, 현재 완료는7A뿐이다.
+
+### Workflow 실행 계약
+
+- 이름 Observation System, event는 workflow_dispatch만 사용한다. mode는 choice/default/options 모두 validate 한 가지다. job도 dispatch+validate 조건을 확인한다. schedule/workflow_run/자동 Weekly 연계/Production job·command는 없다.
+- 기존과 같은 Ubuntu/actions checkout@v6/setup-python@v6/Python3.11/pip requirements 설치 및 pip check를 사용한다. checkout persist-credentials=false, permissions contents:read만 허용한다. 내장 checkout token은 이 최소 권한으로만 사용하며 서비스 토큰을 환경변수에 넣지 않는다.
+- concurrency group은 github-weekly-report-observation으로 기존 github-weekly-report-production과 분리한다. cancel-in-progress=false, queue=max다. [GitHub 공식 concurrency 문서](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)에서 이 조합을 확인했다. queue=max는 최대100개 대기이며 큐가 가득 차면 신규 실행이 취소될 수 있으므로 무제한 대기를 보장하지 않는다.
+- timeout20분은7A의 dependency/오프라인 테스트 job 한도다. 향후 실제 관측 Job의8분 내부 deadline/10분 Workflow 제안과 혼동하지 않는다.
+- 단계는 checkout/Python/dependencies → validate_observation_deployment → Observation 관련 pytest → 전체 pytest → Python compile → git diff --check → always Summary다. 검증/테스트 실패는 비정상 exit code 그대로 job 실패가 된다. continue-on-error/실패 무시/Production bootstrap 옵션은 없다.
+- Summary에는 Workflow/event/Python target/각 step outcome/Production NOT EXECUTED만 표시한다. R2 endpoint, DB 경로, Secret, 파일 내용은 넣지 않는다. upload-artifact는 없으며 setup-python의 pip dependency cache만 사용한다.
+
+### Offline validator 범위
+
+검증기는 Settings.load/os.environ/.env를 사용하지 않는다. Settings dataclass의 필수 필드/기본 timezone, 관측 모듈 imports, frozen model 주요 필드, Pool/Validator/Store/Job/Consumer/Pipeline의 callable signature, schema/객체 크기/Pool/API/deadline 상한과 예산 profile 존재를 검사한다. 필요한 dependency imports 및 소스의 메모리 compile을 확인한다. API/R2 client를 생성하거나 운영 SQLite를 열지 않는다.
+
+socket/SQLite connect/HTTP client/SDK client와 Settings.load에 일시적 금지 guard를 설치하고 검사 후 복구한다. 실패 로그는 고정 category/프로젝트 상대 모듈·소스 이름만 출력하며 예외 원문/Secret 일부·길이·접두사도 출력하지 않는다. validator exit1 또는 잘못된 CLI 옵션 exit2는 성공으로 바꾸지 않는다. --production 옵션은 없다.
+
+필수 설정 검사는 **코드 구조/default 계약**만 의미한다. 현재 단계에서 Secret 전달을 금지하므로 실제 환경의 token/bucket/endpoint 값 존재·형식·권한은 검사하지 않는다. 기존 Production validate_live/validate_r2 정책을 완화하거나 대체하지 않았으며 실제 설정/연결 검사는7B 이후 별도 승인 단계다. Import/Mock 성공을 실제 R2 인증/conditional PUT 실증으로 보고하지 않는다.
+
+### 사용자 검증 절차
+
+1. 로컬에서 python scripts/validate_observation_deployment.py 및 python -m pytest tests/test_observation_workflow.py -q를 실행한다.
+2. 사용자가 diff를 확인해 필요한 변경을 기본 브랜치에 반영한다(이번 작업은 Commit/Push하지 않음).
+3. Actions → Observation System → Run workflow에서 최신 반영 branch/mode=validate를 선택한다. 이번 작업에서 Dispatch하지 않았다.
+4. validator/Observation/full tests/compile/diff가 success인지, Summary에 Production NOT EXECUTED 및 connectivity NOT TESTED가 표시되는지 확인한다. schedule이 없고 기존 Weekly Workflow의 권한/예약/Secret mapping이 그대로인지 확인한다.
+5. 이 validate 성공만으로 관측 수집/Production 옵션/예약을 활성화하지 않는다.
+
+### Phase7B~7E 제안과 Secret 격리 — 전부 미구현
+
+| 단계 | 후속 구현/검증 제안 |
+|---|---|
+| 7B | Observation 전용 R2 bucket/자격증명/Reader·Writer 역할 및 실제 SDK/권한/conditional PUT 실증. 실제 호출은 별도 승인 작업 |
+| 7C | Pool 발행 운영 주체와 실제 수집 가능한 one-shot 인터페이스/수동 전용 Workflow 준비 |
+| 7D | 제한된 실 관측→소비 운영 검증, 지연·누락·복구·예산 확인. 기존 Claim/보고 발송은 별도 명시적 범위 |
+| 7E | 운영 검증 후 관측 예약/monitoring/retention/알림·배포 활성화 |
+
+7B Secret 이름 제안은 OBSERVATION_R2_ENDPOINT/OBSERVATION_R2_BUCKET와 OBSERVATION_R2_READER_ACCESS_KEY_ID/OBSERVATION_R2_READER_SECRET_ACCESS_KEY, OBSERVATION_R2_WRITER_ACCESS_KEY_ID/OBSERVATION_R2_WRITER_SECRET_ACCESS_KEY다. 아직 코드·Workflow·Settings·GitHub Secrets에 추가하거나 연결하지 않았다. 기존 R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET 및 GH_API_TOKEN/OpenAI/Telegram Secret 이름·권한을 바꾸지 않는다.
+
+Reader는 관측/Pool List·GET, Publisher는 해당 prefix의 List·GET·conditional PUT이 필요한 역할로 설계한다. production/·backups/의 DB 접근 권한을 관측 writer에 주지 않는 구조가 목표다. 공급자 IAM의 prefix별 제한 지원을 이번 단계에서 검증했다고 주장하지 않는다. **별도 Observation bucket을 우선 검토**하며 실제 bucket 범위 권한과 현재 loader 설정 분리는7B에서 확인·구현해야 한다. 기존 Consumer loader는 현재 R2 설정을 사용하므로 제안 Secret만 등록해도 자동 연결되는 것은 아니다. Delete/retention은 별도 관리 역할로 검토하며 validate에는 어떤 자격증명도 주입하지 않는다.
+
+### 검증 결과와 미검증 항목
+
+신규 Workflow/validator 테스트18개, 기존 Weekly Workflow와 합쳐64개(1.68초), Observation 관련355개(24.59초), 최종 전체750개(32.17초) 통과. validator 직접 실행 PASS (offline only), Python compileall/git diff --check 통과. 기존 Weekly Workflow는 LF/CRLF 정규화 SHA-256 fixture로 불변을 검사한다. 기존 Production 파일 diff=0이며 운영 DB/API/Claim/과거 run/Commit/Push/Dispatch 접근 없음.
+
+확인한 외부 자료는 GitHub 공식 Workflow concurrency 문서뿐이며 서비스 데이터 API는 호출하지 않았다. GitHub Actions 서버의 실제 Workflow 실행/권한 및 R2 실 호환성은 미검증이다. YAML 파싱/정적 검사 성공을 서버 배포 완료로 보고하지 않는다. Phase7B~7E는 미구현·미배포 상태를 유지한다.

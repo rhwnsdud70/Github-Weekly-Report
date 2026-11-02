@@ -1,0 +1,97 @@
+name: Observation System
+
+"on":
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Offline validation only; no production execution"
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-weekly-report-observation
+  cancel-in-progress: false
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'validate' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        id: dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Validate Observation deployment offline
+        id: validation
+        run: python scripts/validate_observation_deployment.py
+
+      - name: Run offline Observation tests
+        id: observation_tests
+        run: python -m pytest tests/test_observation_*.py tests/test_r2_observations.py -q
+
+      - name: Run complete offline regression suite
+        id: tests
+        run: python -m pytest -q
+
+      - name: Compile Python sources
+        id: compile
+        run: python -m compileall -q config collectors models services database scripts tests
+
+      - name: Check whitespace
+        id: diff
+        run: git diff --check
+
+      # Fixed outcomes only. No file/log/database/credential artifact uploads.
+      - name: Summarize offline validation
+        if: ${{ always() }}
+        env:
+          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
+          VALIDATION_OUTCOME: ${{ steps.validation.outcome }}
+          OBSERVATION_TESTS_OUTCOME: ${{ steps.observation_tests.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          DIFF_OUTCOME: ${{ steps.diff.outcome }}
+        run: |
+          {
+            echo '## Observation System'
+            echo '- Event: workflow_dispatch (validate only)'
+            echo '- Python target: 3.11'
+            echo "- Dependencies: ${DEPENDENCIES_OUTCOME}"
+            echo "- Offline validation: ${VALIDATION_OUTCOME}"
+            echo "- Observation tests: ${OBSERVATION_TESTS_OUTCOME}"
+            echo "- Complete tests: ${TESTS_OUTCOME}"
+            echo "- Compile: ${COMPILE_OUTCOME}"
+            echo "- Diff check: ${DIFF_OUTCOME}"
+            echo '- Production: NOT EXECUTED; schedule disabled.'
+            echo '- Service connectivity/authentication: NOT TESTED.'
+            echo '- Secret injection and diagnostic artifact upload: disabled.'
+          } >> "$GITHUB_STEP_SUMMARY"
