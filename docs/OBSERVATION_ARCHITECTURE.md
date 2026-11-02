@@ -1,6 +1,6 @@
 # 경량 관측 시스템 상세 설계 v1 — 2026-10-27
 
-상태: **Phase 1~6 및7A 구현·오프라인 검증 완료, 실제 운영 실행·배포 미수행**. 관측 전용 수동 validate Workflow와 Secret 없는 구조 검증기를 추가했다. Phase7B~7E(Secret/권한·실제 API 실증·수집·예약/배포)는 미구현이다. 최신 준비 계약은18절, E2E는17절이다. 실제 서비스 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow 배포·dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
+상태: **Phase 1~6/7A 완료, Phase7B 격리 R2 probe 구현·Mock 검증 완료; 실제 R2 실증 NOT TESTED**. 사용자 보고로7A Actions validate 성공을 확인했으나 이번 작업에서 Dispatch하지 않았다. 7B 전용 bucket/자격증명/Environment 생성·live 검증은 사용자 작업으로 남고7C~7E는 미구현이다. 최신 계약은19절, 이전7A는18절, E2E는17절이다. 실제 서비스 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
 
 ## 1. 확인한 현재 구조
 
@@ -638,3 +638,19 @@ Reader는 관측/Pool List·GET, Publisher는 해당 prefix의 List·GET·condit
 신규 Workflow/validator 테스트18개, 기존 Weekly Workflow와 합쳐64개(1.68초), Observation 관련355개(24.59초), 최종 전체750개(32.17초) 통과. validator 직접 실행 PASS (offline only), Python compileall/git diff --check 통과. 기존 Weekly Workflow는 LF/CRLF 정규화 SHA-256 fixture로 불변을 검사한다. 기존 Production 파일 diff=0이며 운영 DB/API/Claim/과거 run/Commit/Push/Dispatch 접근 없음.
 
 확인한 외부 자료는 GitHub 공식 Workflow concurrency 문서뿐이며 서비스 데이터 API는 호출하지 않았다. GitHub Actions 서버의 실제 Workflow 실행/권한 및 R2 실 호환성은 미검증이다. YAML 파싱/정적 검사 성공을 서버 배포 완료로 보고하지 않는다. Phase7B~7E는 미구현·미배포 상태를 유지한다.
+
+## 19. Phase 7B — 격리 테스트 bucket R2 probe 구현
+
+18절의7B 미구현 및 제안 Secret 이름은 당시 기록이다. 이번 사용자 요구에 따라 **OBS_R2_ENDPOINT/OBS_R2_ACCESS_KEY_ID/OBS_R2_SECRET_ACCESS_KEY/OBS_R2_BUCKET 네 개**를 쓰는 전용 probe를 구현했다. 이전 OBSERVATION_R2_* 제안은 바인딩하지 않는다. 기존 Production Settings/R2 factory/Consumer loader/DB Store/두 기존 Workflow는 변경하지 않는다. Phase7B **코드·Mock 준비 완료, 실제 연결 NOT TESTED**이며 bucket/자격증명/Environment 생성과 사용자 live 실증이 남는다.
+
+`services/observation_r2_probe.py`는 frozen 비밀필드 repr 제외 설정·안전 category/HTTP status·불변 단계 결과를 제공한다. Settings.load/.env/기존R2_* fallback 없이 OBS 설정만 검사한다. HTTPS Cloudflare 계정/jurisdiction endpoint, 전용 `gwr-observation-test-` bucket을 client 생성 전에 검증한다. 기존 typed Observation Store의 namespace를 바꾸지 않고 별도 `phase7b-probe/<run>/<attempt>/<nonce>/probe.json`만 사용한다. 계정 전체·운영 DB·백업 객체 접근 API가 없다.
+
+설치된 SDK PutObject 모델의 IfNoneMatch 지원을 확인하고 signed scoped List→conditional PUT→GET(bytes/size/SHA/metadata)→두 번째 conditional PUT412→원본 GET→소유권 GET→정확한 key 삭제 순서다. SHA256은 bytes로 계산하며 ETag를 대체 hash로 쓰지 않는다. 정상7회/첫PUT lost-ack 복구8회, 논리 호출 상한10회, SDK total_max_attempts=1, connect10/read15초다. GET stream 최대64KiB/close 및 client finally close를 적용한다. SDK schema/공식 문서 지원을 실제 R2 실증으로 주장하지 않는다.
+
+첫 PUT timeout/network/5xx는 같은 key를 양성 GET으로 확인해야 성공이다. 미확인은 UNCONFIRMED, 새 key 재시도 및 소유권 불명 삭제 금지다. 두 번째 PUT도 timeout이면 진행 중 요청 앞에서 원본을 삭제하지 않고 Lifecycle로 정리한다. 기존 객체의 초기412는 실패·삭제 금지다. 조건부 쓰기 미지원/일반PUT 덮어쓰기는 실패다. cleanup 소유권 검사는 atomic delete 계약이 아니므로 전용 bucket·임의 UUID·직렬화가 전제이며 불일치 시 남겨 둔다. lifecycle은 관리자가 테스트 bucket prefix에만 설정한다.
+
+새 `observation-r2-check.yml`만 추가했다. dispatch-only validate(Secret/Environment 없음)와 live(Environment observation-r2-test+명시적 confirm)로 나눈다. contents:read, 별도 concurrency github-weekly-report-observation-r2-check/cancel=false/queue=max, timeout20/10분, Ubuntu/Python3.11/Actionsv6를 사용한다. live step에 OBS Secret 네 개만 주입하고 기존R2/OpenAI/Telegram/GH 서비스 Secret은 전달하지 않는다. GitHub Environment 승인 규칙은 사용자가 설정해야 하며 Secret scope 원본은 런타임에서 증명할 수 없다. Repository/Organization에 같은 OBS 이름을 등록하지 않도록 안내한다.
+
+validate는 기존7A offline guard 검사와 SDK schema 검사를 재사용하고 Mock tests를 실행한다. live만 실제 client를 만들 수 있다. CLI 기본validate/비동의live 차단, provider message/헤더/SDK요청/본문/설정 값 없이 고정 category+HTTP만 출력한다. 안전 Summary 외 artifact upload는 없다. exit0=검증·정리 성공, exit1=실패/미확인, exit2=검증 성공 후 정리 경고. 실제 permission403/서명 mismatch 원인은 단정하지 않는다.
+
+설정·Cloudflare 공식 근거·환경 격리 한계·사용자 실행·token 폐기는 [OBSERVATION_R2_CHECK.md](OBSERVATION_R2_CHECK.md)에 정리했다. Phase7C Pool 발행·수동 실 관측 실행경로,7D 운영 실증,7E 정규 관측 예약은 계속 미구현이다. 기존 Scoring/Evidence/Schema/Claim/주차 경계/보고 전송 경로는 불변이다.

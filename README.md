@@ -370,4 +370,14 @@ Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observ
 
 로컬 검증: `python scripts/validate_observation_deployment.py`, `python -m pytest tests/test_observation_workflow.py -q`. 기본 브랜치에 사용자가 변경사항을 반영한 뒤 Actions → Observation System → Run workflow → mode=validate를 선택하고 모든 단계와 Summary의 Production NOT EXECUTED를 확인합니다. 이번 작업에서 Commit/Push/Dispatch는 수행하지 않았습니다. Phase7A 실행을 위해 새 Secret을 추가할 필요는 없습니다.
 
-Phase7B~7E는 미구현입니다. Observation 전용 R2 자격증명/Reader·Writer 분리 및 별도 bucket을 우선 검토하고, 기존 Production Secret 이름은 유지합니다. 이 단계에는 아직 해당 Secret 연결이 없습니다. 후속 구조·권한·실증·배포 게이트는 설계18절과 IMPLEMENTATION_STATUS.md를 참조하세요. 최종 전체 pytest750개 통과입니다.
+Phase7B는 아래 전용 테스트 probe의 코드/Mock 검증까지 준비되었습니다. 실제 R2 실증은 NOT TESTED이며7C~7E는 미구현입니다. 기존 Production Secret/Consumer 설정은 바꾸지 않았습니다. 후속 게이트는 설계19절과 IMPLEMENTATION_STATUS.md를 참조하세요.
+
+## Observation R2 격리 연결 검사 — Phase 7B
+
+`python scripts/check_observation_r2.py`는 기본 오프라인 검사입니다. API client/Secret/SQLite 접근 없이 SDK·Observation 계약을 검사합니다. 실제 연결은 별도 `Observation R2 Connectivity Check` Workflow의 명시적 `mode=live`와 `confirm_isolated_bucket=true`가 모두 필요합니다. 자동 schedule은 없습니다.
+
+사용자는 새 `gwr-observation-test-<unique-suffix>` bucket과 해당 bucket만 허용하는 전용 R2 token을 만들고 GitHub Environment `observation-r2-test`에 `OBS_R2_ENDPOINT`, `OBS_R2_ACCESS_KEY_ID`, `OBS_R2_SECRET_ACCESS_KEY`, `OBS_R2_BUCKET`을 등록해야 합니다. 기존 `R2_*` fallback/.env load는 없으며 Production key/token을 재사용하지 않습니다. validate job에는 Secret이 전달되지 않습니다.
+
+probe는 고유 `phase7b-probe/` 객체의 PUT/GET/bytes·SHA256·metadata, 두 번째 conditional PUT의412와 원본 보존, 이번 실행 객체만 정리를 검증합니다. uncertain PUT은 같은 key만 확인하고 검증 불가 시 UNCONFIRMED, cleanup 실패는 CLEANUP_WARNING으로 비정상 종료합니다. 운영 DB/Claim/Weekly Pipeline/GitHub/OpenAI/Telegram은 실행하지 않습니다. 실제 R2 인증/권한/조건부 PUT/정리는 **NOT TESTED**입니다.
+
+설정·권한·Environment 승인·Lifecycle·token 폐기·사용자 live 실행 절차는 [Phase7B 연결 검사 안내](docs/OBSERVATION_R2_CHECK.md)를 따르세요. 이번 변경에서 bucket 생성/Secret 등록/Commit/Push/Dispatch/실제 연결을 수행하지 않았습니다.
