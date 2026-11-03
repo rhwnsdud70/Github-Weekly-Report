@@ -370,7 +370,7 @@ Actions 콘솔의 `Observation diagnostics`와 automation_runs.report의 `observ
 
 로컬 검증: `python scripts/validate_observation_deployment.py`, `python -m pytest tests/test_observation_workflow.py -q`. 기본 브랜치에 사용자가 변경사항을 반영한 뒤 Actions → Observation System → Run workflow → mode=validate를 선택하고 모든 단계와 Summary의 Production NOT EXECUTED를 확인합니다. 이번 작업에서 Commit/Push/Dispatch는 수행하지 않았습니다. Phase7A 실행을 위해 새 Secret을 추가할 필요는 없습니다.
 
-Phase7B는 아래 전용 테스트 probe의 코드/Mock 검증까지 준비되었습니다. 실제 R2 실증은 NOT TESTED이며7C~7E는 미구현입니다. 기존 Production Secret/Consumer 설정은 바꾸지 않았습니다. 후속 게이트는 설계19절과 IMPLEMENTATION_STATUS.md를 참조하세요.
+Phase7B probe 연결 성공은2026-11-02 사용자 보고로 확인했습니다. 새 Phase7B~7C 테스트 runtime은 아래 경로로 구현했으며 실제 Pool/Observation/Consumer 실증은 별도로 남아 있습니다. 기존 Production Secret/Consumer 설정은 바꾸지 않았습니다. 후속 게이트는 설계20절과 IMPLEMENTATION_STATUS.md를 참조하세요.
 
 ## Observation R2 격리 연결 검사 — Phase 7B
 
@@ -378,6 +378,16 @@ Phase7B는 아래 전용 테스트 probe의 코드/Mock 검증까지 준비되�
 
 사용자는 새 `gwr-observation-test-<unique-suffix>` bucket과 해당 bucket만 허용하는 전용 R2 token을 만들고 GitHub Environment `observation-r2-test`에 `OBS_R2_ENDPOINT`, `OBS_R2_ACCESS_KEY_ID`, `OBS_R2_SECRET_ACCESS_KEY`, `OBS_R2_BUCKET`을 등록해야 합니다. 기존 `R2_*` fallback/.env load는 없으며 Production key/token을 재사용하지 않습니다. validate job에는 Secret이 전달되지 않습니다.
 
-probe는 고유 `phase7b-probe/` 객체의 PUT/GET/bytes·SHA256·metadata, 두 번째 conditional PUT의412와 원본 보존, 이번 실행 객체만 정리를 검증합니다. uncertain PUT은 같은 key만 확인하고 검증 불가 시 UNCONFIRMED, cleanup 실패는 CLEANUP_WARNING으로 비정상 종료합니다. 운영 DB/Claim/Weekly Pipeline/GitHub/OpenAI/Telegram은 실행하지 않습니다. 실제 R2 인증/권한/조건부 PUT/정리는 **NOT TESTED**입니다.
+probe는 고유 `phase7b-probe/` 객체의 PUT/GET/bytes·SHA256·metadata, 두 번째 conditional PUT의412와 원본 보존, 이번 실행 객체만 정리를 검증합니다. uncertain PUT은 같은 key만 확인하고 검증 불가 시 UNCONFIRMED, cleanup 실패는 CLEANUP_WARNING으로 비정상 종료합니다. 운영 DB/Claim/Weekly Pipeline/GitHub/OpenAI/Telegram은 실행하지 않습니다. 사용자가 보고한 probe 성공을 새 Observation 실연동 검증으로 간주하지 않습니다.
 
 설정·권한·Environment 승인·Lifecycle·token 폐기·사용자 live 실행 절차는 [Phase7B 연결 검사 안내](docs/OBSERVATION_R2_CHECK.md)를 따르세요. 이번 변경에서 bucket 생성/Secret 등록/Commit/Push/Dispatch/실제 연결을 수행하지 않았습니다.
+
+## 실제-data Observation 테스트 실행 — Phase 7B~7C
+
+새 **Observation Test Runtime** Workflow는 수동 `validate / pool / boundary / verify / full`을 지원합니다. 기존 세 Workflow는 수정하지 않았고 schedule은 추가하지 않았습니다. 기본 validate는 Secret/client/API/DB 없이 실행합니다.
+
+`observation-r2-test` Environment의 OBS 네 Secret만으로 `gwr-observation-test` 또는 suffix가 붙은 전용 테스트 bucket에 접근합니다. 명시적 확인이 필요한 실제 모드는 GitHub의 공개 read-only API와 `test-observation-pools/v1/`, `test-observations/v1/`만 사용합니다. schema의 fixture 표시는 테스트 라우팅용이며 실제 GitHub 수치는 합성하지 않습니다. Production Consumer/DB/Claim/보고 전송에 연결하지 않습니다.
+
+사용자 반영 후 Actions에서 validate→pool→**실제 일요일19:00~20:00 KST에만** boundary/full→verify 순서로 검증하세요. 늦은 실행은 client 생성 전에 거절합니다. 첫 주 previous missing은 정상적인 unknown이고 partial exit2일 수 있습니다. 다음 실제 주차가 있어야 Star 비교를 실증할 수 있습니다. 기본 객체 보존이며 선택적 cleanup은 해당 실행의 acknowledged key만 정리합니다.
+
+로컬 오프라인 검사: `python scripts/run_observation_test_once.py`, `python -m pytest tests/test_observation_test_runtime.py -q`. **새 경로의 실제 Pool/Boundary/Consumer/R2 cleanup: NOT TESTED**. 전용 자격증명이 로컬에 없으므로 이번 작업에서는 API·Dispatch·Push를 수행하지 않았습니다. 모드별 예산/격리/실제 사용자 절차는 [실행 안내](docs/OBSERVATION_TEST_RUNTIME.md)를 참조하세요.

@@ -1,6 +1,6 @@
 # 경량 관측 시스템 상세 설계 v1 — 2026-10-27
 
-상태: **Phase 1~6/7A 완료, Phase7B 격리 R2 probe 구현·Mock 검증 완료; 실제 R2 실증 NOT TESTED**. 사용자 보고로7A Actions validate 성공을 확인했으나 이번 작업에서 Dispatch하지 않았다. 7B 전용 bucket/자격증명/Environment 생성·live 검증은 사용자 작업으로 남고7C~7E는 미구현이다. 최신 계약은19절, 이전7A는18절, E2E는17절이다. 실제 서비스 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
+상태: **Phase 1~6/7A 및7B 연결 probe 완료(실 연결 성공은2026-11-02 사용자 보고). Phase7B~7C 테스트 전용 실제-data runtime 구현·Mock 검증 완료; 새 Pool/Boundary/Consumer 실제 연동은 NOT TESTED**. 최신 계약은20절, 기존 probe는19절이다. 전용 bucket/Environment만 허용하고 정규 수집/운영 배포7D~7E는 미완료다. 이번 작업에서 실제 서비스 API/운영 DB/기존 Claim/과거 run/Telegram/Workflow dispatch는 건드리지 않는다. 점수표/MIN_SIGNALS=2/Critical 예외/3600초는 유지한다.
 
 ## 1. 확인한 현재 구조
 
@@ -641,6 +641,8 @@ Reader는 관측/Pool List·GET, Publisher는 해당 prefix의 List·GET·condit
 
 ## 19. Phase 7B — 격리 테스트 bucket R2 probe 구현
 
+아래 NOT TESTED 기록은 최초 구현 당시 상태다. 이후 사용자 보고 연결 성공과 새7B~7C runtime 상태는20절을 우선한다.
+
 18절의7B 미구현 및 제안 Secret 이름은 당시 기록이다. 이번 사용자 요구에 따라 **OBS_R2_ENDPOINT/OBS_R2_ACCESS_KEY_ID/OBS_R2_SECRET_ACCESS_KEY/OBS_R2_BUCKET 네 개**를 쓰는 전용 probe를 구현했다. 이전 OBSERVATION_R2_* 제안은 바인딩하지 않는다. 기존 Production Settings/R2 factory/Consumer loader/DB Store/두 기존 Workflow는 변경하지 않는다. Phase7B **코드·Mock 준비 완료, 실제 연결 NOT TESTED**이며 bucket/자격증명/Environment 생성과 사용자 live 실증이 남는다.
 
 `services/observation_r2_probe.py`는 frozen 비밀필드 repr 제외 설정·안전 category/HTTP status·불변 단계 결과를 제공한다. Settings.load/.env/기존R2_* fallback 없이 OBS 설정만 검사한다. HTTPS Cloudflare 계정/jurisdiction endpoint, 전용 `gwr-observation-test-` bucket을 client 생성 전에 검증한다. 기존 typed Observation Store의 namespace를 바꾸지 않고 별도 `phase7b-probe/<run>/<attempt>/<nonce>/probe.json`만 사용한다. 계정 전체·운영 DB·백업 객체 접근 API가 없다.
@@ -654,3 +656,27 @@ Reader는 관측/Pool List·GET, Publisher는 해당 prefix의 List·GET·condit
 validate는 기존7A offline guard 검사와 SDK schema 검사를 재사용하고 Mock tests를 실행한다. live만 실제 client를 만들 수 있다. CLI 기본validate/비동의live 차단, provider message/헤더/SDK요청/본문/설정 값 없이 고정 category+HTTP만 출력한다. 안전 Summary 외 artifact upload는 없다. exit0=검증·정리 성공, exit1=실패/미확인, exit2=검증 성공 후 정리 경고. 실제 permission403/서명 mismatch 원인은 단정하지 않는다.
 
 설정·Cloudflare 공식 근거·환경 격리 한계·사용자 실행·token 폐기는 [OBSERVATION_R2_CHECK.md](OBSERVATION_R2_CHECK.md)에 정리했다. Phase7C Pool 발행·수동 실 관측 실행경로,7D 운영 실증,7E 정규 관측 예약은 계속 미구현이다. 기존 Scoring/Evidence/Schema/Claim/주차 경계/보고 전송 경로는 불변이다.
+
+## 20. Phase 7B~7C — 실제-data 테스트 runtime 및 수동 Workflow
+
+2026-11-02 사용자가 gwr-observation-test / observation-r2-test에서 probe의 인증·Bucket·PUT·GET200/SHA256/conditional412/cleanup204 성공을 보고했다. Codex에서 재실행하거나 Secret을 획득하지 않았다. 새 Pool→Job→Store→Consumer 연동은 **Mock 완료, 실제 서비스 NOT TESTED**다.
+
+새 services/observation_test_runtime.py, scripts/run_observation_test_once.py, observation-test-runtime.yml은 기존 builder/Pool envelope/Boundary Job/R2ObservationStore/Consumer를 주입해 연결한다. Production Settings/DB Store/Weekly Runner/Pipeline/Schema/Claim 및 기존 세 Workflow는 수정하지 않는다. mode=validate(default)/pool/boundary/verify/full을 수동 dispatch로만 제공하며 자동 schedule은 없다.
+
+테스트 settings는 OBS 네 변수만 읽고 실제 승인 bucket gwr-observation-test 또는 suffix형만 허용한다. 기존7B probe suffix 필수 정책은 바꾸지 않았다. 생성한 전용 SDK client를 기존 Store에 항상 명시 주입하고 namespace=fixture로 고정한다. endpoint/자격증명 repr 제외 및 생성 전 유효성 검증, wrapper의 bucket+test prefix+conditional PUT 재검사로 운영 객체 접근을 차단한다. 실제 metadata는 응답값 그대로이며 fixture=True는 기존 schema의 테스트 라우팅 표시다. 이를 production envelope로 위장하거나 Production validator를 완화하지 않는다.
+
+Pool은 주차별 최신 manifest 최대4개를 검증하고 공개 metadata discovery 최대8개와 기존 ID builder로 합친다. 명시적 repository 목록 또는 현재 Trending 기반 탐색만 사용하고 Total Star 정렬/가짜 사건은 없다. 이 테스트 경로의 최초 pool은 사용자 지시에 따라 공개 discovery로 bootstrap하며 기존 설계의 운영 DB read-only bootstrap 제안은 사용하지 않는다. 기존 TTL/우선순위/중복 ID 병합/Critical overflow/Pool40을 유지한다. 과거 signal/score를 현재 evidence로 승격하지 않는다. production history/watchlist DB는 읽지 않으므로 해당 정보는 기존 테스트 manifest에 실제 있던 항목만 유지한다.
+
+Pool discovery는 기존 GitHubClient/repository_model/collect_trending, Boundary는 기존 ObservationGitHub를 이용한다. 테스트 adapter에서 named GET 최대8logical/12attempts, HTTP10초/core reserve5, private:false를 요구한다. Search/GraphQL/LLM0, token은 github.token contentsread다. full 단계간 core remaining을 넘겨 예비량을 보존한다. Job metadata40/45attempts/Trending1logical·2attempts/deadline480초와 R2 profile 한도는 불변이다. Pool read List4+GET최대4/report_read, publish2/publication, Job10, Consumer18 logical을 각각 기존 예산으로 적용한다. SDK retry1 및 실제 before-send 추적도 기존 Store가 수행한다. 선택 cleanup은 새로운 acknowledged 객체 최대2개/GET+Delete 각1회다.
+
+boundary/full은 실제 경계 이후0~3600초인지 client 생성 전과 Pool 이후 재확인한다. 창 밖 실행은 BOUNDARY_WINDOW_CLOSED다. Job 요청이 창을 넘어 완료되면 실제 시각·성공 상태와 coverage NONE을 구분해 게시하고 Consumer가 제외한다. cutoff는 실제 verify 시작에 고정한다. 최신 metadata로 과거 boundary를 재현하는 옵션/시각 override는 없다.
+
+pool 게시 후 Job이 List/GET으로 다시 선택하고, verify도 fresh report_read Store로 저장 객체를 다시 읽는다. 정상 EMPTY/previous missing/CONFLICT/UNAVAILABLE/손상/SHA/부분 게시/timeout을 구분한다. 같은 key/bytes 멱등성과 다른 bytes 충돌은 기존 Store 정책 그대로다. Pool/R2 오류를 빈 목록으로 바꿔 초기화하지 않는다. exit0=해당 모드 완전 성공, exit2=partial/missing/cleanup 경고, exit1=실패. 첫 실제 주차의 previous missing은 expected unknown이고 비교 실증 완료를 뜻하지 않는다.
+
+객체는 기본 보존한다. cleanup_current_run을 명시했을 때만 HTTP200 acknowledged PUT의 이번 UUID key를 bytes 재확인하고 삭제한다. 기존412/uncertain PUT key는 삭제하지 않는다. lost-ack 후 GET으로 게시가 확인돼도 정리 소유권이 불명확하면 CLEANUP_WARNING_UNCONFIRMED_WRITE로 남긴다. 다른 실행·prefix·bucket 전체 정리는 없다. Lifecycle과 cleanup의 한계는 별도 안내한다.
+
+Workflow는 contentsread, Environment observation-r2-test/confirm, 전용 concurrency github-weekly-report-observation-test-runtime/cancelfalse/queuemax, Ubuntu/Python3.11/Actionsv6/timeout20분을 사용한다. validate는 Secret·Environment·client 없이 구조 및 Mock 검증만 수행한다. live job은 OBS 네 Secret+자동 read-only github.token만 전달한다. 사용자 입력은 env/인용 배열로 CLI에 전달한다. 실행ID/key/SHA/실제시각/안전HTTP·diagnostic만 Summary에 쓰며 artifact upload는 없다.
+
+상세 모드·상한·설정·실제 실행·보관 정책은 [OBSERVATION_TEST_RUNTIME.md](OBSERVATION_TEST_RUNTIME.md)를 따른다. 테스트는 실제 Producer와 immutable FakeS3 bytes를 두 boundary에 실행하고 Consumer가 재조회하여1000→1200(delta200/20%),Fork100→150(50/50%) 및 충돌/시간/TTL/조건부PUT/손상/cutoff/cleanup/격리를 검사한다. Legacy만 있는 경우 등 기존 Consumer 회귀도 유지한다. 새 Workflow의 서버 실행·전용 SDK 추적·실제 Pool/관측/Consumer/정리는 사용자 실행 전까지 NOT TESTED다. Phase7D 실제 두 주차 운영 검증 및7E 예약·배포는 미진행이다.
+
+최종 오프라인 검증: 신규 runtime47 passed(1.69s), Observation 관련455 passed(30.40s), 전체850 passed(40.09s). Python compileall/git diff --check 통과. 기존 세 Workflow 및 모든 보호 Production/Store/Job/Consumer/DB 파일 diff=0. 실제 서비스 API·운영 DB·Commit·Push·Dispatch는 수행하지 않았다.

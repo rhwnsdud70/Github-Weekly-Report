@@ -1,6 +1,6 @@
 # Phase 7B — 격리된 R2 연결 검증
 
-구현 및 Mock 검증 단계다. **실제 R2 연결/권한/conditional PUT: NOT TESTED**. 테스트 bucket·전용 자격증명 생성과 Environment 등록은 사용자가 수행해야 한다. 이번 변경은 생성·등록·Dispatch·Push·실제 API 호출을 하지 않는다. 사용자가 보고한 Phase7A Actions validate 성공은 서비스 연결 검증과 다르다.
+최초 구현은 Mock 검증만 수행했다. 이후 **2026-11-02 사용자가 실제 연결/인증200/Bucket200/PUT200/GET200/SHA/Conditional412/Cleanup204 성공을 보고**했다(Environment observation-r2-test, bucket gwr-observation-test). 이는 probe 작업의 실증이며 새 Pool/Boundary/Consumer 실연동은 NOT TESTED다. Codex에서 실제 호출/Dispatch/Push를 수행하지 않았다. 아래는 최초 probe의 사용 계약이며, suffix 없는 실제 bucket을 허용하는 새 경로는 [OBSERVATION_TEST_RUNTIME.md](OBSERVATION_TEST_RUNTIME.md)를 참조한다. 기존 probe 코드/Workflow는 그대로 유지했다.
 
 ## Cloudflare와 GitHub 설정
 
